@@ -25,8 +25,10 @@ import {
 } from "./context.ts";
 import { discoverRoles, resolveRole } from "./roles.ts";
 import {
+	AGENT_GATEWAY_TOOL_NAMES,
 	CHILD_META_ENTRY_TYPE,
 	COLLABORATION_TOOL_NAMES,
+	DIRECT_AGENT_TOOL_NAMES,
 	EXTENSION_ID,
 	FORK_CONTEXT_ENTRY_TYPE,
 	ROOT_PATH,
@@ -160,6 +162,15 @@ export class AgentControl {
 		return result;
 	}
 
+	private configureChildTools(session: NonNullable<AgentRecord["session"]>): void {
+		const hidden = new Set<string>(DIRECT_AGENT_TOOL_NAMES);
+		const active = session.getActiveToolNames().filter((name) => !hidden.has(name));
+		for (const name of AGENT_GATEWAY_TOOL_NAMES) {
+			if (!active.includes(name) && session.getToolDefinition(name)) active.push(name);
+		}
+		session.setActiveToolsByName(active);
+	}
+
 	private attachRootUi(record: AgentRecord, session: NonNullable<AgentRecord["session"]>): void {
 		const root = this.root;
 		if (!root?.ctx.hasUI) return;
@@ -254,10 +265,12 @@ export class AgentControl {
 	}
 
 	configureInitialRootTools(): void {
-		const deferred = new Set<string>(COLLABORATION_TOOL_NAMES.filter((name) => name !== "list_agents"));
+		const hidden = new Set<string>(DIRECT_AGENT_TOOL_NAMES);
 		const current = this.pi.getActiveTools();
-		const next = current.filter((name) => !deferred.has(name));
-		if (!next.includes("list_agents")) next.push("list_agents");
+		const next = current.filter((name) => !hidden.has(name));
+		for (const name of AGENT_GATEWAY_TOOL_NAMES) {
+			if (!next.includes(name)) next.push(name);
+		}
 		if (next.length !== current.length || next.some((name, index) => name !== current[index])) {
 			this.pi.setActiveTools(next);
 		}
@@ -449,7 +462,7 @@ export class AgentControl {
 
 	private completionNotice(record: AgentRecord): string {
 		const suffix = record.statusMessage ? `: ${record.statusMessage}` : "";
-		return `[agent ${record.status}] ${record.path}${suffix}\nPull: list_agents(path_prefix=\"${record.path}\", include_results=true)`;
+		return `[agent ${record.status}] ${record.path}${suffix}\nPull: list_agents(view=\"results\", path_prefix=\"${record.path}\")`;
 	}
 
 	private completeRun(record: AgentRecord, messages: readonly AgentMessage[]): void {
@@ -588,6 +601,7 @@ export class AgentControl {
 				sessionManager,
 				settingsManager,
 			});
+			this.configureChildTools(session);
 			record.session = session;
 			this.attachRootUi(record, session);
 			record.sessionFile = session.sessionFile;
@@ -741,14 +755,6 @@ export class AgentControl {
 		}));
 	}
 
-	enableCollaborationTools(ctx: ExtensionContext): string[] {
-		const enabled = COLLABORATION_TOOL_NAMES.filter((name) => name !== "list_agents");
-		if (this.callerPath(ctx) !== ROOT_PATH) return [...enabled];
-		const current = this.pi.getActiveTools();
-		const added = enabled.filter((name) => !current.includes(name));
-		if (added.length > 0) this.pi.setActiveTools([...current, ...added]);
-		return [...enabled];
-	}
 
 	private rootView(): AgentView {
 		return {
@@ -871,6 +877,7 @@ export class AgentControl {
 			sessionManager,
 			settingsManager,
 		});
+		this.configureChildTools(session);
 		if (forkContext.length > 0) session.agent.state.messages = [...forkContext, ...session.messages];
 		record.session = session;
 		this.attachRootUi(record, session);

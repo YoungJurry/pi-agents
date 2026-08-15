@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 - 2026-08-15
+
+- Replace session-persistent deferred schemas with a stable `agent_action` dispatcher.
+- Add `list_agents(view="roles" | "tools" | "status" | "results")` and remove boolean view flags.
+- Return the five action descriptions and parameter schemas only from the `tools` catalog view.
+- Keep individual action implementations locally registered without exposing their provider schemas.
+- Use the same compact gateway surface for root and child agents.
+
 ## 0.2.1 - 2026-08-15
 
 - Reduce the root prompt to a single delegation capability sentence.

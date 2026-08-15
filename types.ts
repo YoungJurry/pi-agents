@@ -7,13 +7,17 @@ export const STATE_ENTRY_TYPE = "codex-agents-state";
 export const CHILD_META_ENTRY_TYPE = "codex-agents-child-meta";
 export const FORK_CONTEXT_ENTRY_TYPE = "codex-agents-fork-context";
 export const ROOT_PATH = "/root";
-export const COLLABORATION_TOOL_NAMES = [
+export const DIRECT_AGENT_TOOL_NAMES = [
 	"spawn_agent",
 	"send_message",
 	"followup_task",
 	"wait_agent",
 	"interrupt_agent",
-	"list_agents",
+] as const;
+export const AGENT_GATEWAY_TOOL_NAMES = ["list_agents", "agent_action"] as const;
+export const COLLABORATION_TOOL_NAMES = [
+	...DIRECT_AGENT_TOOL_NAMES,
+	...AGENT_GATEWAY_TOOL_NAMES,
 ] as const;
 
 export type CollaborationToolName = (typeof COLLABORATION_TOOL_NAMES)[number];
@@ -85,6 +89,12 @@ export interface AgentView {
 	finalAnswer?: string;
 }
 
+export interface AgentToolCatalogEntry {
+	name: string;
+	description: string;
+	parameters: unknown;
+}
+
 export interface CollaborationDetails {
 	tool: CollaborationToolName;
 	sender: string;
@@ -92,7 +102,7 @@ export interface CollaborationDetails {
 	message?: string;
 	timedOut?: boolean;
 	roles?: AgentRoleView[];
-	enabledTools?: string[];
+	toolCatalog?: AgentToolCatalogEntry[];
 }
 
 export interface ForkContextPayload {

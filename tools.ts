@@ -6,10 +6,17 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { AgentControl } from "./control.ts";
-import type { AgentView, CollaborationDetails, CollaborationToolName } from "./types.ts";
+import type {
+	AgentToolCatalogEntry,
+	AgentView,
+	CollaborationDetails,
+	CollaborationToolName,
+} from "./types.ts";
 
 const ThinkingLevelSchema = StringEnum(["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const);
+const AgentListViewSchema = StringEnum(["roles", "tools", "status", "results"] as const);
 
 function details(tool: CollaborationToolName, sender: string, targets: AgentView[], message?: string, timedOut?: boolean): CollaborationDetails {
 	return { tool, sender, targets, message, timedOut };
@@ -23,6 +30,12 @@ function compactStatus(agent: AgentView): string {
 	const residency = agent.loaded ? "loaded" : "unloaded";
 	const nickname = agent.nickname ? ` (${agent.nickname})` : "";
 	return `${agent.path}${nickname}: ${agent.status}, ${residency}`;
+}
+
+function catalogParameters(entry: AgentToolCatalogEntry): string {
+	const schema = entry.parameters as { properties?: Record<string, unknown>; required?: string[] };
+	const required = new Set(schema.required ?? []);
+	return Object.keys(schema.properties ?? {}).map((name) => required.has(name) ? `${name}*` : name).join(", ");
 }
 
 function renderCallHeader(name: string, summary: string, theme: any): Text {
@@ -62,8 +75,14 @@ function renderCollaborationResult(
 			}
 		}
 	}
-	if (data.enabledTools?.length) {
-		lines.push(`  ${theme.fg("muted", "Enabled:")} ${data.enabledTools.join(", ")}`);
+	if (data.toolCatalog?.length) {
+		lines.push(`  ${theme.fg("muted", "Tools:")} ${data.toolCatalog.map((tool) => tool.name).join(", ")}`);
+		if (options.expanded) {
+			for (const tool of data.toolCatalog) {
+				lines.push(`    ${theme.fg("accent", tool.name)} — ${tool.description}`);
+				lines.push(`      ${theme.fg("dim", catalogParameters(tool) || "no arguments")}`);
+			}
+		}
 	}
 	if (options.expanded && data.message) lines.push("", theme.fg("dim", data.message));
 	return new Text(lines.join("\n"), 0, 0);
@@ -77,7 +96,7 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 		parameters: Type.Object({
 			message: Type.String({ description: "Task to assign to the child agent" }),
 			task_name: Type.String({ description: "Unique lowercase name using letters, digits, and underscores" }),
-			agent_type: Type.Optional(Type.String({ description: "Optional role name returned by list_agents(include_roles=true); omit for general-purpose work" })),
+			agent_type: Type.Optional(Type.String({ description: "Optional role name returned by list_agents(view=\"roles\"); omit for general-purpose work" })),
 			model: Type.Optional(Type.String({ description: "Optional provider/model override; unavailable for full-history forks" })),
 			reasoning_effort: Type.Optional(ThinkingLevelSchema),
 			fork_turns: Type.Optional(Type.String({ description: "none, all, or a positive integer string; defaults to all" })),
@@ -184,42 +203,79 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 		renderResult: renderCollaborationResult,
 	});
 
+	const directTools = [spawnAgent, sendMessage, followupTask, waitAgent, interruptAgent];
+	const toolCatalog: AgentToolCatalogEntry[] = directTools.map((tool) => ({
+		name: tool.name,
+		description: tool.description,
+		parameters: tool.parameters,
+	}));
+	const directToolsByName = new Map(directTools.map((tool) => [tool.name, tool]));
+
+	const agentAction = defineTool({
+		name: "agent_action",
+		label: "Agent Action",
+		description: "Execute a sub-agent action returned by list_agents(view=\"tools\").",
+		parameters: Type.Object({
+			action: Type.String({ description: "Action name from the tool catalog" }),
+			arguments: Type.Record(Type.String(), Type.Unknown(), { description: "Arguments matching the selected action schema" }),
+		}),
+		async execute(id, params, signal, onUpdate, ctx) {
+			const actionTool = directToolsByName.get(params.action);
+			if (!actionTool) throw new Error(`Unknown agent action '${params.action}'. Query list_agents(view="tools") for available actions.`);
+			if (!Value.Check(actionTool.parameters, params.arguments)) {
+				const first = Value.Errors(actionTool.parameters, params.arguments)[0];
+				const problem = first ? `${first.instancePath || "/"}: ${first.message}` : "arguments do not match the action schema";
+				throw new Error(`Invalid arguments for ${params.action}: ${problem}`);
+			}
+			return actionTool.execute(id, params.arguments, signal, onUpdate, ctx);
+		},
+		renderCall(args, theme) {
+			return renderCallHeader("agent_action", args.action, theme);
+		},
+		renderResult: renderCollaborationResult,
+	});
+
 	const listAgents = defineTool({
 		name: "list_agents",
 		label: "List Agents",
-		description: "Access sub-agent roles, delegation, status, and stored results.",
+		description: "Inspect sub-agent roles, action tools, status, or stored results.",
 		parameters: Type.Object({
-			path_prefix: Type.Optional(Type.String({ description: "Absolute path or caller-relative subtree prefix" })),
-			include_roles: Type.Optional(Type.Boolean({ description: "Return available roles and their tool access, and enable spawn_agent plus collaboration tools" })),
-			include_results: Type.Optional(Type.Boolean({ description: "Include stored final answers; defaults to false" })),
+			view: AgentListViewSchema,
+			path_prefix: Type.Optional(Type.String({ description: "Optional absolute path or caller-relative subtree prefix for status and results" })),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const sender = control.callerPath(ctx);
-			const agents = control.list(ctx, params.path_prefix, params.include_results ?? false);
-			if (!params.include_roles) {
-				return result(JSON.stringify({ agents }), details("list_agents", sender, agents));
-			}
-			const roles = control.listRoles(ctx);
-			const enabledTools = control.enableCollaborationTools(ctx);
-			return result(
-				JSON.stringify({ agents, roles, enabled_tools: enabledTools }),
-				{
-					...details("list_agents", sender, agents),
+			if (params.view === "roles") {
+				const roles = control.listRoles(ctx);
+				return result(JSON.stringify({ roles }), {
+					...details("list_agents", sender, []),
 					roles,
-					enabledTools,
-				},
-			);
+				});
+			}
+			if (params.view === "tools") {
+				return result(
+					JSON.stringify({
+						tools: toolCatalog,
+						invoke_with: {
+							tool: "agent_action",
+							arguments: { action: "<tool name>", arguments: "<matching action arguments>" },
+						},
+					}),
+					{
+						...details("list_agents", sender, []),
+						toolCatalog,
+					},
+				);
+			}
+			const agents = control.list(ctx, params.path_prefix, params.view === "results");
+			return result(JSON.stringify({ agents }), details("list_agents", sender, agents));
 		},
 		renderCall(args, theme) {
-			const scope = [
-				args.include_roles ? "roles" : undefined,
-				args.include_results ? "results" : undefined,
-				args.path_prefix,
-			].filter(Boolean).join(" · ") || "status";
+			const scope = args.path_prefix ? `${args.view} · ${args.path_prefix}` : args.view;
 			return renderCallHeader("list_agents", scope, theme);
 		},
 		renderResult: renderCollaborationResult,
 	});
 
-	return [spawnAgent, sendMessage, followupTask, waitAgent, interruptAgent, listAgents];
+	return [...directTools, listAgents, agentAction];
 }
