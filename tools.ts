@@ -92,12 +92,12 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 	const spawnAgent = defineTool({
 		name: "spawn_agent",
 		label: "Spawn Agent",
-		description: "Delegate independent work to a persistent child agent; returns its path immediately.",
+		description: "Delegate a concrete, bounded subtask that can run independently; returns its path immediately.",
 		parameters: Type.Object({
 			message: Type.String({ description: "Task to assign to the child agent" }),
 			task_name: Type.String({ description: "Unique lowercase name using letters, digits, and underscores" }),
 			agent_type: Type.Optional(Type.String({ description: "Optional role name returned by list_agents(view=\"roles\"); omit for general-purpose work" })),
-			model: Type.Optional(Type.String({ description: "Optional provider/model override; unavailable for full-history forks" })),
+			model: Type.Optional(Type.String({ description: "Optional provider/model override" })),
 			reasoning_effort: Type.Optional(ThinkingLevelSchema),
 			fork_turns: Type.Optional(Type.String({ description: "none, all, or a positive integer string; defaults to all" })),
 		}),
@@ -175,10 +175,10 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 			if (outcome.aborted) throw new Error("wait_agent was aborted");
 			const notices = control.drainPendingMail(sender);
 			const agents = control.list(ctx);
-			const text = outcome.timedOut
-				? "Wait timed out."
-				: notices.length > 0
-					? `Mailbox activity received:\n\n${notices.join("\n\n")}`
+			const text = notices.length > 0
+				? `Mailbox activity received:\n\n${notices.join("\n\n")}`
+				: outcome.timedOut
+					? "Wait timed out."
 					: "Mailbox activity received.";
 			return result(text, details("wait_agent", sender, agents, text, outcome.timedOut));
 		},

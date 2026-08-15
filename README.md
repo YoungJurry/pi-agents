@@ -93,10 +93,29 @@ nickname_candidates: [Ada, Grace]
 Review carefully and return findings with exact paths.
 ```
 
+## Model configuration
+
+Global sub-agent settings live outside the installed package so updates cannot overwrite them:
+
+`~/.pi/agent/codex-agents/agents-setting.json`
+
+```json
+{
+  "defaultModel": "opencode/deepseek-v4-flash-free"
+}
+```
+
+Model selection uses this precedence:
+
+1. The `spawn_agent` action's `model` argument
+2. The selected role's `model` frontmatter
+3. `agents-setting.json`'s `defaultModel`
+4. The parent agent's active model
+
+The settings file is optional. Invalid JSON, an empty `defaultModel`, or an unavailable configured model produces an explicit error. `fork_turns` controls inherited messages independently of model selection.
+
 ## Lifecycle
 
-- Default child model: `opencode/deepseek-v4-flash-free`
-- The `spawn_agent` action's `model` argument or a role-level `model` can override it
 - Default child execution slots: 3 (4 active agents including root)
 - Default resident child sessions: 3
 - Completed/interrupted sessions are unloaded by LRU when residency is full
@@ -106,7 +125,9 @@ Review carefully and return findings with exact paths.
 - Resuming an existing main session removes groups whose owning main-session file has been deleted; new sessions and `/reload` do not trigger cleanup
 - Referenced legacy flat child files are migrated when their main session is resumed
 - Parents receive a compact completion notice instead of the full answer; use `list_agents(view="results")` or read the result file on demand
-- Notices to a busy agent are queued safely: `wait_agent` returns them in its own result, and any leftovers are delivered right after the recipient's turn ends
+- Notices to a busy agent are queued safely: `wait_agent` returns them in its own result, and any leftovers are delivered right after a successful recipient turn
+- Failed notice delivery is re-queued instead of silently discarded
+- Notices pending when a turn is aborted or errors are deferred to the next explicit turn without restarting the interrupted agent
 - The extension never inserts messages between an assistant tool call and its tool result, keeping session history protocol-valid for strict gateways
 - Child sessions are kept out of Pi's normal `/resume` picker
 - Agent-tree metadata persists in root session custom entries

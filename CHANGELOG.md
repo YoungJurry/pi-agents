@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 - 2026-08-15
+
+- Replace vague root guidance with Codex-derived parallel speed/quality criteria while keeping bounded-task guidance in the on-demand action catalog.
+- Move the default child model from source code to `~/.pi/agent/codex-agents/agents-setting.json`.
+- Resolve models by spawn override, role override, global setting, then parent-model inheritance.
+- Decouple model selection from `fork_turns` history inheritance.
+- Re-queue failed notification flushes instead of dropping them.
+- Defer queued mail after aborted or errored turns without automatically restarting the recipient.
+- Add regression tests for prompt separation, settings validation and precedence, notification ordering, abort behavior, and flush recovery.
+
 ## 0.3.2 - 2026-08-15
 
 - Queue inter-agent notifications while the recipient's turn is active instead of appending into the live message tree.

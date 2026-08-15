@@ -24,6 +24,7 @@ import {
 	sanitizeForkMessages,
 } from "./context.ts";
 import { discoverRoles, resolveRole } from "./roles.ts";
+import { loadAgentSettings, selectAgentModel } from "./settings.ts";
 import {
 	AGENT_GATEWAY_TOOL_NAMES,
 	CHILD_META_ENTRY_TYPE,
@@ -43,7 +44,6 @@ import {
 	type RootBinding,
 } from "./types.ts";
 
-const DEFAULT_SUBAGENT_MODEL = "opencode/deepseek-v4-flash-free";
 const DEFAULT_MAX_CONCURRENT_SUBAGENTS = 3;
 const DEFAULT_MAX_RESIDENT_SUBAGENTS = 3;
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
@@ -329,11 +329,23 @@ export class AgentControl {
 		this.activeTurns.add(path);
 	}
 
-	noteTurnEnd(path: string): void {
+	noteTurnEnd(path: string, stopReason?: string): void {
 		if (!this.activeTurns.delete(path)) return;
 		const queued = this.pendingMail.get(path) ?? [];
+		if (queued.length === 0) return;
+		const deferWithoutWake = stopReason === "aborted" || stopReason === "error";
+		if (deferWithoutWake && path !== ROOT_PATH) {
+			// Child sessions are resumed through launch(), which carries this mail into
+			// the next explicit task without restarting an interrupted agent.
+			return;
+		}
 		this.pendingMail.delete(path);
-		if (queued.length > 0) this.flushMail(path, queued);
+		const delivery = deferWithoutWake ? "nextTurn" : "steer";
+		void this.flushMail(path, queued, delivery).catch(() => {
+			const newer = this.pendingMail.get(path) ?? [];
+			this.pendingMail.set(path, [...queued, ...newer]);
+			this.changed();
+		});
 	}
 
 	drainPendingMail(path: string): string[] {
@@ -342,33 +354,27 @@ export class AgentControl {
 		return queued;
 	}
 
-	private flushMail(path: string, contents: string[]): void {
+	private async flushMail(path: string, contents: string[], delivery: "steer" | "nextTurn"): Promise<void> {
 		const content = contents.join("\n\n");
+		const message = { customType: EXTENSION_ID, content, display: true, details: { type: "AGENT_STATUS" } };
 		if (path === ROOT_PATH) {
-			this.pi.sendMessage(
-				{ customType: EXTENSION_ID, content, display: true, details: { type: "AGENT_STATUS" } },
-				{ triggerTurn: true, deliverAs: "steer" },
-			);
+			this.pi.sendMessage(message, {
+				triggerTurn: delivery === "steer",
+				deliverAs: delivery,
+			});
 			return;
 		}
 		const record = this.agentsByPath.get(path);
-		if (!record) return;
-		void (async () => {
-			try {
-				await this.ensureLoaded(record);
-				if (record.session!.isIdle) {
-					this.launch(record, content);
-				} else {
-					await record.session!.sendCustomMessage(
-						{ customType: EXTENSION_ID, content, display: true, details: { type: "AGENT_STATUS" } },
-						{ triggerTurn: true, deliverAs: "steer" },
-					);
-				}
-				record.lastUsedAt = Date.now();
-			} catch {
-				// Best effort; the parent can still query status and stored results.
-			}
-		})();
+		if (!record) throw new Error(`agent ${path} not found while flushing queued mail`);
+		if (!record.session) await this.ensureLoaded(record);
+		if (delivery === "nextTurn") {
+			await record.session!.sendCustomMessage(message, { triggerTurn: false, deliverAs: "nextTurn" });
+		} else if (record.session!.isIdle) {
+			this.launch(record, content);
+		} else {
+			await record.session!.sendCustomMessage(message, { triggerTurn: true, deliverAs: "steer" });
+		}
+		record.lastUsedAt = Date.now();
 	}
 
 	configureInitialRootTools(): void {
@@ -479,8 +485,12 @@ export class AgentControl {
 	}
 
 	private async resolveModel(ctx: ExtensionContext, requested?: string): Promise<Model<any>> {
+		const value = requested?.trim();
+		if (!value) {
+			if (ctx.model) return ctx.model;
+			throw new Error("no sub-agent model configured and the parent agent has no active model");
+		}
 		const runtime = await this.getModelRuntime(ctx);
-		const value = requested?.trim() || DEFAULT_SUBAGENT_MODEL;
 		const slash = value.indexOf("/");
 		if (slash > 0) {
 			const model = runtime.getModel(value.slice(0, slash), value.slice(slash + 1));
@@ -549,13 +559,18 @@ export class AgentControl {
 				this.activeTurns.add(record.path);
 				this.markMailboxConsumed(record.path);
 			}
-			if (event.type === "turn_end") this.noteTurnEnd(record.path);
+			if (event.type === "turn_end") {
+				this.noteTurnEnd(record.path, event.message.role === "assistant" ? event.message.stopReason : undefined);
+			}
 			if (event.type === "message_update" || event.type === "tool_execution_start" || event.type === "tool_execution_end") {
 				record.updatedAt = Date.now();
 			}
 			if (event.type === "agent_end" && !event.willRetry) {
 				this.completeRun(record, event.messages);
-				if (this.activeTurns.has(record.path)) this.noteTurnEnd(record.path);
+				if (this.activeTurns.has(record.path)) {
+					const lastAssistant = [...event.messages].reverse().find((message) => message.role === "assistant");
+					this.noteTurnEnd(record.path, lastAssistant?.role === "assistant" ? lastAssistant.stopReason : undefined);
+				}
 			}
 			this.changed();
 		});
@@ -611,6 +626,11 @@ export class AgentControl {
 	private launch(record: AgentRecord, content: string): void {
 		const session = record.session;
 		if (!session) throw new Error(`agent ${record.path} is not loaded`);
+		const carriedMail = this.drainPendingMail(record.path);
+		if (carriedMail.length > 0) {
+			this.mailboxPending.set(record.path, 0);
+			content = `${carriedMail.join("\n\n")}\n\n${content}`;
+		}
 		if (!record.holdsExecutionSlot) {
 			this.reserveExecutionSlot();
 			record.holdsExecutionSlot = true;
@@ -630,6 +650,10 @@ export class AgentControl {
 			{ triggerTurn: true, deliverAs: "steer" },
 		).catch((error) => {
 			if (generation !== record.launchGeneration) return;
+			if (carriedMail.length > 0) {
+				const newer = this.pendingMail.get(record.path) ?? [];
+				this.pendingMail.set(record.path, [...carriedMail, ...newer]);
+			}
 			record.status = "errored";
 			record.statusMessage = error instanceof Error ? error.message : String(error);
 			record.finalAnswer = record.statusMessage;
@@ -657,9 +681,6 @@ export class AgentControl {
 		}
 		if (!request.message.trim()) throw new Error("message must not be empty");
 		const forkMode = parseForkMode(request.forkTurns);
-		if (forkMode === "all" && request.model) {
-			throw new Error("full-history forks inherit the parent model; use fork_turns='none' or a positive integer to override model");
-		}
 		this.pendingPaths.add(childPath);
 		let slotReserved = false;
 		try {
@@ -667,7 +688,11 @@ export class AgentControl {
 			this.reserveExecutionSlot();
 			slotReserved = true;
 			const role = resolveRole(ctx.cwd, ctx.isProjectTrusted(), request.agentType);
-			const selectedModel = await this.resolveModel(ctx, request.model || role.model);
+			const settings = loadAgentSettings();
+			const selectedModel = await this.resolveModel(
+				ctx,
+				selectAgentModel(request.model, role.model, settings.defaultModel),
+			);
 			const thinkingLevel = request.thinkingLevel || role.thinkingLevel || ctx.thinkingLevel;
 			const forkMessages = sanitizeForkMessages(this.callerMessages(ctx), forkMode);
 			const sessionManager = SessionManager.create(ctx.cwd, this.childSessionDirectory);
@@ -808,7 +833,7 @@ export class AgentControl {
 
 	async waitForMailbox(ctx: ExtensionContext, timeoutMs?: number, signal?: AbortSignal): Promise<{ timedOut: boolean; aborted: boolean }> {
 		const callerPath = this.callerPath(ctx);
-		if ((this.mailboxPending.get(callerPath) || 0) > 0) {
+		if ((this.pendingMail.get(callerPath)?.length || 0) > 0 || (this.mailboxPending.get(callerPath) || 0) > 0) {
 			this.mailboxPending.set(callerPath, 0);
 			return { timedOut: false, aborted: false };
 		}
@@ -865,10 +890,12 @@ export class AgentControl {
 
 	listRoles(ctx: ExtensionContext): AgentRoleView[] {
 		this.callerPath(ctx);
+		const settings = loadAgentSettings();
+		const inheritedModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 		return discoverRoles(ctx.cwd, ctx.isProjectTrusted()).map((role) => ({
 			name: role.name,
 			description: role.description,
-			model: role.model,
+			model: role.model || settings.defaultModel || inheritedModel,
 			thinkingLevel: role.thinkingLevel,
 			tools: role.tools,
 			source: role.source,
