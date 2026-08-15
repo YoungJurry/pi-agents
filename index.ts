@@ -111,9 +111,15 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 	};
 	control.onChange(updateUi);
 
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", (event, ctx) => {
 		activeContext = ctx;
 		control.bindRoot(ctx);
+		const resumedExistingSession = event.reason === "resume"
+			|| (event.reason === "startup" && ctx.sessionManager.getEntries().some((entry) => entry.type === "message"));
+		if (resumedExistingSession) {
+			const removed = control.cleanupOrphanStorage(ctx.sessionManager.getSessionId());
+			if (removed > 0) ctx.ui.notify(`Cleaned ${removed} orphaned agent storage ${removed === 1 ? "group" : "groups"}.`, "info");
+		}
 		control.configureInitialRootTools();
 		if (ctx.mode === "tui") {
 			ctx.ui.setWidget(WIDGET_KEY, (tui, theme) => {

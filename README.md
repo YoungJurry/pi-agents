@@ -100,8 +100,11 @@ Review carefully and return findings with exact paths.
 - Default child execution slots: 3 (4 active agents including root)
 - Default resident child sessions: 3
 - Completed/interrupted sessions are unloaded by LRU when residency is full
-- Child sessions persist under `~/.pi/agent/codex-agents/sessions/` and reload lazily
-- Full final answers persist under `~/.pi/agent/codex-agents/results/`
+- Child sessions persist under `~/.pi/agent/codex-agents/roots/<root-session-id>/sessions/` and reload lazily
+- Full final answers persist under `~/.pi/agent/codex-agents/roots/<root-session-id>/results/`
+- Each root storage group records its owning main-session file in `owner.json`
+- Resuming an existing main session removes groups whose owning main-session file has been deleted; new sessions and `/reload` do not trigger cleanup
+- Referenced legacy flat child files are migrated when their main session is resumed
 - Parents receive a compact completion notice instead of the full answer; use `list_agents(view="results")` or read the result file on demand
 - Child sessions are kept out of Pi's normal `/resume` picker
 - Agent-tree metadata persists in root session custom entries

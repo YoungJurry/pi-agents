@@ -76,6 +76,12 @@ interface StateWaiter {
 	abort?: () => void;
 }
 
+interface RootStorageOwner {
+	version: 1;
+	rootSessionId: string;
+	rootSessionFile?: string;
+}
+
 function normalizeAgentName(name: string): string {
 	const normalized = name.trim();
 	if (!normalized) throw new Error("task_name must not be empty");
@@ -133,8 +139,9 @@ export class AgentControl {
 	private activeExecutionSlots = 0;
 	private disposed = false;
 	private uiDialogTail: Promise<void> = Promise.resolve();
-	private readonly childSessionDirectory = path.join(getAgentDir(), "codex-agents", "sessions");
-	private readonly agentResultDirectory = path.join(getAgentDir(), "codex-agents", "results");
+	private readonly rootStorageDirectory = path.join(getAgentDir(), "codex-agents", "roots");
+	private childSessionDirectory = path.join(getAgentDir(), "codex-agents", "sessions");
+	private agentResultDirectory = path.join(getAgentDir(), "codex-agents", "results");
 
 	constructor(
 		private readonly pi: ExtensionAPI,
@@ -199,16 +206,16 @@ export class AgentControl {
 		session.extensionRunner.setUIContext(proxiedUi, root.ctx.mode);
 	}
 
-	private migrateChildSessionFile(sessionFile: string | undefined): { path: string | undefined; migrated: boolean } {
-		if (!sessionFile) return { path: undefined, migrated: false };
-		const source = path.resolve(sessionFile);
-		const directory = path.resolve(this.childSessionDirectory);
-		if (path.dirname(source) === directory) return { path: source, migrated: false };
-		const target = path.join(directory, path.basename(source));
+	private migrateStoredFile(file: string | undefined, directory: string): { path: string | undefined; migrated: boolean } {
+		if (!file) return { path: undefined, migrated: false };
+		const source = path.resolve(file);
+		const destinationDirectory = path.resolve(directory);
+		if (path.dirname(source) === destinationDirectory) return { path: source, migrated: false };
+		const target = path.join(destinationDirectory, path.basename(source));
 		try {
-			fs.mkdirSync(directory, { recursive: true });
+			fs.mkdirSync(destinationDirectory, { recursive: true });
 			if (fs.existsSync(source)) {
-				if (fs.existsSync(target)) throw new Error(`child session migration target already exists: ${target}`);
+				if (fs.existsSync(target)) throw new Error(`agent storage migration target already exists: ${target}`);
 				fs.renameSync(source, target);
 				return { path: target, migrated: true };
 			}
@@ -219,9 +226,61 @@ export class AgentControl {
 		return { path: source, migrated: false };
 	}
 
+	private configureRootStorage(ctx: ExtensionContext, sessionId: string): void {
+		const safeSessionId = sessionId.replace(/[^a-zA-Z0-9._-]/g, "_");
+		const rootDirectory = path.join(this.rootStorageDirectory, safeSessionId);
+		this.childSessionDirectory = path.join(rootDirectory, "sessions");
+		this.agentResultDirectory = path.join(rootDirectory, "results");
+		try {
+			fs.mkdirSync(this.childSessionDirectory, { recursive: true });
+			fs.mkdirSync(this.agentResultDirectory, { recursive: true });
+			const sessionFile = ctx.sessionManager.getSessionFile();
+			const owner: RootStorageOwner = {
+				version: 1,
+				rootSessionId: sessionId,
+				rootSessionFile: sessionFile ? path.resolve(sessionFile) : undefined,
+			};
+			fs.writeFileSync(path.join(rootDirectory, "owner.json"), `${JSON.stringify(owner, null, 2)}\n`, "utf8");
+		} catch {
+			// Session operation will surface a concrete error later if storage is unavailable.
+		}
+	}
+
+	cleanupOrphanStorage(currentSessionId: string): number {
+		if (!fs.existsSync(this.rootStorageDirectory)) return 0;
+		let entries: fs.Dirent[];
+		try {
+			entries = fs.readdirSync(this.rootStorageDirectory, { withFileTypes: true });
+		} catch {
+			return 0;
+		}
+		let removed = 0;
+		for (const entry of entries) {
+			if (!entry.isDirectory()) continue;
+			const directory = path.join(this.rootStorageDirectory, entry.name);
+			let owner: RootStorageOwner;
+			try {
+				owner = JSON.parse(fs.readFileSync(path.join(directory, "owner.json"), "utf8")) as RootStorageOwner;
+			} catch {
+				continue;
+			}
+			if (owner.version !== 1 || typeof owner.rootSessionId !== "string") continue;
+			if (owner.rootSessionId === currentSessionId) continue;
+			if (owner.rootSessionFile && fs.existsSync(owner.rootSessionFile)) continue;
+			try {
+				fs.rmSync(directory, { recursive: true, force: true });
+				removed++;
+			} catch {
+				// A failed cleanup must not block resume.
+			}
+		}
+		return removed;
+	}
+
 	bindRoot(ctx: ExtensionContext): void {
 		this.disposed = false;
 		const sessionId = ctx.sessionManager.getSessionId();
+		this.configureRootStorage(ctx, sessionId);
 		const changedSession = this.root?.sessionId !== sessionId;
 		this.root = {
 			ctx,
@@ -815,14 +874,16 @@ export class AgentControl {
 			if (entry.type === "custom" && entry.customType === STATE_ENTRY_TYPE && isPersistedState(entry.data)) latest = entry.data;
 		}
 		if (!latest || latest.rootSessionId !== ctx.sessionManager.getSessionId()) return;
-		let migratedAnySession = false;
+		let migratedAnyFile = false;
 		for (const persisted of latest.agents) {
 			const status = persisted.status === "running" || persisted.status === "pending_init" ? "interrupted" : persisted.status;
-			const migratedSession = this.migrateChildSessionFile(persisted.sessionFile);
-			migratedAnySession ||= migratedSession.migrated;
+			const migratedSession = this.migrateStoredFile(persisted.sessionFile, this.childSessionDirectory);
+			const migratedResult = this.migrateStoredFile(persisted.resultFile, this.agentResultDirectory);
+			migratedAnyFile ||= migratedSession.migrated || migratedResult.migrated;
 			const record: AgentRecord = {
 				...persisted,
 				sessionFile: migratedSession.path,
+				resultFile: migratedResult.path,
 				status,
 				statusMessage: status === "interrupted" && persisted.status === "running" ? "interrupted by previous session shutdown" : persisted.statusMessage,
 				loaded: false,
@@ -833,7 +894,7 @@ export class AgentControl {
 			this.pathBySessionId.set(record.id, record.path);
 			if (record.nickname) this.usedNicknames.add(record.nickname);
 		}
-		if (migratedAnySession) this.persistState();
+		if (migratedAnyFile) this.persistState();
 	}
 
 	private forkContextFromSessionManager(sessionManager: SessionManager): AgentMessage[] {

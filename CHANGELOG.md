@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 - 2026-08-15
+
+- Group child sessions and results under their owning root session ID.
+- Record the root session file in each storage group's `owner.json`.
+- Remove orphaned storage groups only when an existing main session is resumed.
+- Migrate the resumed main session's referenced legacy child files into its group.
+
 ## 0.3.0 - 2026-08-15
 
 - Replace session-persistent deferred schemas with a stable `agent_action` dispatcher.
