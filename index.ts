@@ -114,6 +114,7 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		activeContext = ctx;
 		control.bindRoot(ctx);
+		control.configureInitialRootTools();
 		if (ctx.mode === "tui") {
 			ctx.ui.setWidget(WIDGET_KEY, (tui, theme) => {
 				widgetTui = tui;

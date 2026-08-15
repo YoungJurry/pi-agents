@@ -14,23 +14,30 @@ Then start Pi or run `/reload` in an existing session.
 
 ## Quick start
 
-Ask Pi to delegate work, or let the model call `spawn_agent` directly:
+Ask Pi to delegate work:
 
 ```text
 Spawn two agents to research independent parts of this task, wait for completion,
 then pull and summarize their results.
 ```
 
+Before the first delegation, the model calls `list_agents(include_roles=true)`. That result returns the available roles and enables the collaboration tools. It can then choose a role and call `spawn_agent`.
+
 Completion notices are intentionally small. Full answers enter the root context only when explicitly requested with `list_agents(include_results=true)`.
 
 ## Tools
 
-- `spawn_agent`: spawn a child `AgentSession`
+Only `list_agents` is active initially. It discovers roles, enables delegation tools, lists status, and retrieves stored results.
+
+Calling `list_agents(include_roles=true)` dynamically enables:
+
+- `spawn_agent`: spawn a persistent child `AgentSession`
 - `send_message`: non-waking mailbox message
 - `followup_task`: assign more work and trigger processing
 - `wait_agent`: event-driven mailbox wait
 - `interrupt_agent`: abort a run without deleting context
-- `list_agents`: inspect the canonical agent tree
+
+Pi records the newly active definitions on the loader result. Providers with native deferred-tool support receive structured tool definitions at that point in the transcript, preserving the stable prompt prefix. Other providers receive the complete active tool list on the next request.
 
 Agents use canonical paths such as `/root/api_research` and can recursively spawn children.
 

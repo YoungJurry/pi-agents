@@ -23,7 +23,7 @@ import {
 	rootAgentInstructions,
 	sanitizeForkMessages,
 } from "./context.ts";
-import { resolveRole } from "./roles.ts";
+import { discoverRoles, resolveRole } from "./roles.ts";
 import {
 	CHILD_META_ENTRY_TYPE,
 	COLLABORATION_TOOL_NAMES,
@@ -33,6 +33,7 @@ import {
 	STATE_ENTRY_TYPE,
 	type AgentLifecycleStatus,
 	type AgentRecord,
+	type AgentRoleView,
 	type AgentView,
 	type ForkContextPayload,
 	type PersistedAgent,
@@ -250,6 +251,16 @@ export class AgentControl {
 
 	markMailboxConsumed(path: string): void {
 		this.mailboxPending.set(path, 0);
+	}
+
+	configureInitialRootTools(): void {
+		const deferred = new Set<string>(COLLABORATION_TOOL_NAMES.filter((name) => name !== "list_agents"));
+		const current = this.pi.getActiveTools();
+		const next = current.filter((name) => !deferred.has(name));
+		if (!next.includes("list_agents")) next.push("list_agents");
+		if (next.length !== current.length || next.some((name, index) => name !== current[index])) {
+			this.pi.setActiveTools(next);
+		}
 	}
 
 	callerPath(ctx: ExtensionContext): string {
@@ -716,6 +727,27 @@ export class AgentControl {
 		return views
 			.filter((agent) => !resolvedPrefix || agent.path === resolvedPrefix || agent.path.startsWith(`${resolvedPrefix}/`))
 			.sort((left, right) => left.path.localeCompare(right.path));
+	}
+
+	listRoles(ctx: ExtensionContext): AgentRoleView[] {
+		this.callerPath(ctx);
+		return discoverRoles(ctx.cwd, ctx.isProjectTrusted()).map((role) => ({
+			name: role.name,
+			description: role.description,
+			model: role.model,
+			thinkingLevel: role.thinkingLevel,
+			tools: role.tools,
+			source: role.source,
+		}));
+	}
+
+	enableCollaborationTools(ctx: ExtensionContext): string[] {
+		const enabled = COLLABORATION_TOOL_NAMES.filter((name) => name !== "list_agents");
+		if (this.callerPath(ctx) !== ROOT_PATH) return [...enabled];
+		const current = this.pi.getActiveTools();
+		const added = enabled.filter((name) => !current.includes(name));
+		if (added.length > 0) this.pi.setActiveTools([...current, ...added]);
+		return [...enabled];
 	}
 
 	private rootView(): AgentView {

@@ -103,6 +103,15 @@ export interface ChildMetaPayload {
 	role?: string;
 }
 
+export interface AgentRoleView {
+	name: string;
+	description: string;
+	model?: string;
+	thinkingLevel?: ThinkingLevel;
+	tools?: string[];
+	source: "builtin" | "user" | "project";
+}
+
 export interface AgentRole {
 	name: string;
 	description: string;

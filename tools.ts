@@ -55,11 +55,11 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 	const spawnAgent = defineTool({
 		name: "spawn_agent",
 		label: "Spawn Agent",
-		description: "Delegate independent work to a child agent; returns its path immediately.",
+		description: "Delegate independent work to a persistent child agent; returns its path immediately.",
 		parameters: Type.Object({
 			message: Type.String({ description: "Task to assign to the child agent" }),
 			task_name: Type.String({ description: "Unique lowercase name using letters, digits, and underscores" }),
-			agent_type: Type.Optional(Type.String({ description: "Agent role, such as default, explorer, or awaiter" })),
+			agent_type: Type.Optional(Type.String({ description: "Optional role name returned by list_agents(include_roles=true); omit for general-purpose work" })),
 			model: Type.Optional(Type.String({ description: "Optional provider/model override; unavailable for full-history forks" })),
 			reasoning_effort: Type.Optional(ThinkingLevelSchema),
 			fork_turns: Type.Optional(Type.String({ description: "none, all, or a positive integer string; defaults to all" })),
@@ -169,15 +169,24 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 	const listAgents = defineTool({
 		name: "list_agents",
 		label: "List Agents",
-		description: "List agent status; set include_results=true only to retrieve answers.",
+		description: "Discover roles, manage agents, and retrieve stored results.",
 		parameters: Type.Object({
 			path_prefix: Type.Optional(Type.String({ description: "Absolute path or caller-relative subtree prefix" })),
-			include_results: Type.Optional(Type.Boolean({ description: "Include stored final answers and result file paths; defaults to false" })),
+			include_roles: Type.Optional(Type.Boolean({ description: "Discover roles and enable collaboration tools" })),
+			include_results: Type.Optional(Type.Boolean({ description: "Include stored final answers; defaults to false" })),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const sender = control.callerPath(ctx);
 			const agents = control.list(ctx, params.path_prefix, params.include_results ?? false);
-			return result(JSON.stringify({ agents }), details("list_agents", sender, agents));
+			if (!params.include_roles) {
+				return result(JSON.stringify({ agents }), details("list_agents", sender, agents));
+			}
+			const roles = control.listRoles(ctx);
+			const enabledTools = control.enableCollaborationTools(ctx);
+			return result(
+				JSON.stringify({ agents, roles, enabled_tools: enabledTools }),
+				details("list_agents", sender, agents),
+			);
 		},
 		renderCall(args, theme) {
 			return renderCallHeader("list_agents", args.path_prefix || "all", theme);
