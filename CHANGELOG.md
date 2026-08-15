@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2 - 2026-08-15
+
+- Queue inter-agent notifications while the recipient's turn is active instead of appending into the live message tree.
+- Fix assistant(tool_calls) → user → tool history corruption that caused gateway 400 errors on strict providers.
+- Deliver queued completion notices inside `wait_agent` results.
+- Flush remaining queued notices at turn end and wake the recipient to process them.
+
 ## 0.3.1 - 2026-08-15
 
 - Group child sessions and results under their owning root session ID.

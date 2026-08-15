@@ -106,6 +106,8 @@ Review carefully and return findings with exact paths.
 - Resuming an existing main session removes groups whose owning main-session file has been deleted; new sessions and `/reload` do not trigger cleanup
 - Referenced legacy flat child files are migrated when their main session is resumed
 - Parents receive a compact completion notice instead of the full answer; use `list_agents(view="results")` or read the result file on demand
+- Notices to a busy agent are queued safely: `wait_agent` returns them in its own result, and any leftovers are delivered right after the recipient's turn ends
+- The extension never inserts messages between an assistant tool call and its tool result, keeping session history protocol-valid for strict gateways
 - Child sessions are kept out of Pi's normal `/resume` picker
 - Agent-tree metadata persists in root session custom entries
 - Child extension approval dialogs are serialized and forwarded to the root TUI with the agent path

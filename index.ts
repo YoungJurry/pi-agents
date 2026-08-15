@@ -149,7 +149,13 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 
 	pi.on("turn_start", (_event, ctx) => {
 		activeContext = ctx;
+		control.noteTurnStart(ROOT_PATH);
 		control.markMailboxConsumed(ROOT_PATH);
+	});
+
+	pi.on("turn_end", (_event, ctx) => {
+		activeContext = ctx;
+		control.noteTurnEnd(ROOT_PATH);
 	});
 
 	pi.on("model_select", (_event, ctx) => {

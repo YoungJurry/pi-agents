@@ -164,7 +164,7 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 	const waitAgent = defineTool({
 		name: "wait_agent",
 		label: "Wait Agent",
-		description: "Wait for agent activity; use this instead of polling.",
+		description: "Wait for agent activity and receive queued completion notices in the result; use this instead of polling.",
 		parameters: Type.Object({
 			timeout_ms: Type.Optional(Type.Integer({ minimum: 1, maximum: 3_600_000 })),
 		}),
@@ -173,11 +173,14 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 			onUpdate?.(result("Waiting for mailbox activity…", details("wait_agent", sender, [])));
 			const outcome = await control.waitForMailbox(ctx, params.timeout_ms, signal);
 			if (outcome.aborted) throw new Error("wait_agent was aborted");
+			const notices = control.drainPendingMail(sender);
 			const agents = control.list(ctx);
-			return result(
-				outcome.timedOut ? "Wait timed out." : "Mailbox activity received; inspect the injected team message.",
-				details("wait_agent", sender, agents, undefined, outcome.timedOut),
-			);
+			const text = outcome.timedOut
+				? "Wait timed out."
+				: notices.length > 0
+					? `Mailbox activity received:\n\n${notices.join("\n\n")}`
+					: "Mailbox activity received.";
+			return result(text, details("wait_agent", sender, agents, text, outcome.timedOut));
 		},
 		renderCall(args, theme) {
 			return renderCallHeader("wait_agent", `${args.timeout_ms ?? 30_000}ms`, theme);

@@ -130,6 +130,8 @@ export class AgentControl {
 	private readonly waiters = new Map<string, Set<StateWaiter>>();
 	private readonly listeners = new Set<() => void>();
 	private readonly usedNicknames = new Set<string>();
+	private readonly activeTurns = new Set<string>();
+	private readonly pendingMail = new Map<string, string[]>();
 	private root?: RootBinding;
 	private rootStatus: AgentLifecycleStatus = "completed";
 	private rootStatusMessage?: string;
@@ -323,6 +325,52 @@ export class AgentControl {
 		this.mailboxPending.set(path, 0);
 	}
 
+	noteTurnStart(path: string): void {
+		this.activeTurns.add(path);
+	}
+
+	noteTurnEnd(path: string): void {
+		if (!this.activeTurns.delete(path)) return;
+		const queued = this.pendingMail.get(path) ?? [];
+		this.pendingMail.delete(path);
+		if (queued.length > 0) this.flushMail(path, queued);
+	}
+
+	drainPendingMail(path: string): string[] {
+		const queued = this.pendingMail.get(path) ?? [];
+		this.pendingMail.delete(path);
+		return queued;
+	}
+
+	private flushMail(path: string, contents: string[]): void {
+		const content = contents.join("\n\n");
+		if (path === ROOT_PATH) {
+			this.pi.sendMessage(
+				{ customType: EXTENSION_ID, content, display: true, details: { type: "AGENT_STATUS" } },
+				{ triggerTurn: true, deliverAs: "steer" },
+			);
+			return;
+		}
+		const record = this.agentsByPath.get(path);
+		if (!record) return;
+		void (async () => {
+			try {
+				await this.ensureLoaded(record);
+				if (record.session!.isIdle) {
+					this.launch(record, content);
+				} else {
+					await record.session!.sendCustomMessage(
+						{ customType: EXTENSION_ID, content, display: true, details: { type: "AGENT_STATUS" } },
+						{ triggerTurn: true, deliverAs: "steer" },
+					);
+				}
+				record.lastUsedAt = Date.now();
+			} catch {
+				// Best effort; the parent can still query status and stored results.
+			}
+		})();
+	}
+
 	configureInitialRootTools(): void {
 		const hidden = new Set<string>(DIRECT_AGENT_TOOL_NAMES);
 		const current = this.pi.getActiveTools();
@@ -497,11 +545,18 @@ export class AgentControl {
 				record.statusMessage = undefined;
 				record.updatedAt = Date.now();
 			}
-			if (event.type === "turn_start") this.markMailboxConsumed(record.path);
+			if (event.type === "turn_start") {
+				this.activeTurns.add(record.path);
+				this.markMailboxConsumed(record.path);
+			}
+			if (event.type === "turn_end") this.noteTurnEnd(record.path);
 			if (event.type === "message_update" || event.type === "tool_execution_start" || event.type === "tool_execution_end") {
 				record.updatedAt = Date.now();
 			}
-			if (event.type === "agent_end" && !event.willRetry) this.completeRun(record, event.messages);
+			if (event.type === "agent_end" && !event.willRetry) {
+				this.completeRun(record, event.messages);
+				if (this.activeTurns.has(record.path)) this.noteTurnEnd(record.path);
+			}
 			this.changed();
 		});
 	}
@@ -697,7 +752,13 @@ export class AgentControl {
 		const taskPath = type === "AGENT_STATUS" ? senderPath : recipientPath;
 		const taskName = taskPath.split("/").filter(Boolean).at(-1) || "root";
 		const content = formatTeamMessage({ type, taskName, sender: senderPath, payload });
-		if (recipientPath === ROOT_PATH) {
+		if (this.activeTurns.has(recipientPath)) {
+			// Never append into a live turn: it would split assistant tool_calls from
+			// their tool results and produce protocol-invalid history.
+			const queued = this.pendingMail.get(recipientPath) ?? [];
+			queued.push(content);
+			this.pendingMail.set(recipientPath, queued);
+		} else if (recipientPath === ROOT_PATH) {
 			this.pi.sendMessage(
 				{ customType: EXTENSION_ID, content, display: true, details: { sender: senderPath, recipient: recipientPath, type } },
 				{ triggerTurn, deliverAs: "steer" },
@@ -962,6 +1023,8 @@ export class AgentControl {
 			}
 		}
 		this.waiters.clear();
+		this.activeTurns.clear();
+		this.pendingMail.clear();
 		for (const record of this.agentsByPath.values()) {
 			if (record.session?.isStreaming) {
 				try { await record.session.abort(); } catch { /* best effort */ }
