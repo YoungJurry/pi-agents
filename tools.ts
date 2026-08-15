@@ -47,6 +47,24 @@ function renderCollaborationResult(
 	const icon = data.timedOut ? theme.fg("warning", "◷") : theme.fg("success", "✓");
 	const lines = [`${icon} ${theme.fg("toolTitle", data.tool)}`];
 	for (const agent of data.targets) lines.push(`  ${theme.fg("accent", compactStatus(agent))}`);
+	if (data.roles?.length) {
+		lines.push(`  ${theme.fg("muted", "Roles:")} ${data.roles.map((role) => role.name).join(", ")}`);
+		if (options.expanded) {
+			for (const role of data.roles) {
+				const configuration = [
+					role.source,
+					role.model ? `model: ${role.model}` : undefined,
+					role.thinkingLevel ? `thinking: ${role.thinkingLevel}` : undefined,
+					`tools: ${role.tools?.join(", ") || "default set"}`,
+				].filter(Boolean).join(" · ");
+				lines.push(`    ${theme.fg("accent", role.name)} — ${role.description}`);
+				lines.push(`      ${theme.fg("dim", configuration)}`);
+			}
+		}
+	}
+	if (data.enabledTools?.length) {
+		lines.push(`  ${theme.fg("muted", "Enabled:")} ${data.enabledTools.join(", ")}`);
+	}
 	if (options.expanded && data.message) lines.push("", theme.fg("dim", data.message));
 	return new Text(lines.join("\n"), 0, 0);
 }
@@ -169,10 +187,10 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 	const listAgents = defineTool({
 		name: "list_agents",
 		label: "List Agents",
-		description: "Discover roles, manage agents, and retrieve stored results.",
+		description: "Access sub-agent roles, delegation, status, and stored results.",
 		parameters: Type.Object({
 			path_prefix: Type.Optional(Type.String({ description: "Absolute path or caller-relative subtree prefix" })),
-			include_roles: Type.Optional(Type.Boolean({ description: "Discover roles and enable collaboration tools" })),
+			include_roles: Type.Optional(Type.Boolean({ description: "Return available roles and their tool access, and enable spawn_agent plus collaboration tools" })),
 			include_results: Type.Optional(Type.Boolean({ description: "Include stored final answers; defaults to false" })),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
@@ -185,11 +203,20 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 			const enabledTools = control.enableCollaborationTools(ctx);
 			return result(
 				JSON.stringify({ agents, roles, enabled_tools: enabledTools }),
-				details("list_agents", sender, agents),
+				{
+					...details("list_agents", sender, agents),
+					roles,
+					enabledTools,
+				},
 			);
 		},
 		renderCall(args, theme) {
-			return renderCallHeader("list_agents", args.path_prefix || "all", theme);
+			const scope = [
+				args.include_roles ? "roles" : undefined,
+				args.include_results ? "results" : undefined,
+				args.path_prefix,
+			].filter(Boolean).join(" · ") || "status";
+			return renderCallHeader("list_agents", scope, theme);
 		},
 		renderResult: renderCollaborationResult,
 	});

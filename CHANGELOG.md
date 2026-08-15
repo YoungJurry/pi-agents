@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 - 2026-08-15
+
+- Reduce the root prompt to a single delegation capability sentence.
+- Move role discovery, tool activation, and result retrieval guidance into `list_agents` parameter descriptions.
+- Show discovered roles and enabled tools in the `list_agents` TUI result.
+- Label `list_agents` calls as roles, results, or status instead of always showing `all`.
+
 ## 0.2.0 - 2026-08-15
 
 - Keep only `list_agents` active before delegation is requested.

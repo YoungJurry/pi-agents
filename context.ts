@@ -7,7 +7,7 @@ export type ForkMode = "none" | "all" | number;
 const SHARED_GUIDANCE = `All agents share the same working directory and filesystem. Edits made by one agent are immediately visible to every other agent. Coordinate ownership of files and avoid overwriting another agent's work.`;
 
 export function rootAgentInstructions(): string {
-	return `<multi_agent_role>You can delegate independent work to sub-agents. Call list_agents(include_roles=true) before using spawn_agent for the first time. Completion notices omit results; retrieve full results with list_agents(include_results=true).</multi_agent_role>`;
+	return `<multi_agent_role>You can delegate independent work to sub-agents when useful.</multi_agent_role>`;
 }
 
 export function childAgentInstructions(path: string, parentPath: string, rolePrompt?: string): string {

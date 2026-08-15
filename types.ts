@@ -91,6 +91,8 @@ export interface CollaborationDetails {
 	targets: AgentView[];
 	message?: string;
 	timedOut?: boolean;
+	roles?: AgentRoleView[];
+	enabledTools?: string[];
 }
 
 export interface ForkContextPayload {
