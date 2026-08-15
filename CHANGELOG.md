@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1 - 2026-08-15
+
+- Remove test-only dependencies from the published package manifest so Pi Git installs stay dependency-free.
+- Keep test tooling isolated in temporary development environments.
+
 ## 0.4.0 - 2026-08-15
 
 - Replace vague root guidance with Codex-derived parallel speed/quality criteria while keeping bounded-task guidance in the on-demand action catalog.
