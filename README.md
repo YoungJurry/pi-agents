@@ -5,7 +5,7 @@ In-process persistent multi-agent collaboration modeled after OpenAI Codex Multi
 ## Install
 
 ```bash
-pi install git:github.com/smithyyang/pi-codex-agents
+pi install git:github.com/YoungJurry/pi-agents
 ```
 
 Then start Pi or run `/reload` in an existing session.
