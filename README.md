@@ -38,7 +38,9 @@ The picker shows lifecycle status, model, role, nickname, and residency. Selecti
 
 Viewer controls:
 
-- `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End`: scroll
+- `↑` / `↓`: move one line
+- `←` / `→`: move one page up or down
+- `t` / `b`: jump to the top or bottom
 - `Ctrl+O`: expand or collapse tool output
 - `Ctrl+T`: show or hide thinking
 - `r`: refresh immediately

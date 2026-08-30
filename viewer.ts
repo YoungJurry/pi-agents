@@ -11,7 +11,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
-	matchesKey,
 	Spacer,
 	Text,
 	truncateToWidth,
@@ -334,16 +333,16 @@ export class AgentTranscriptViewer {
 		} else if (this.keybindings.matches(data, "tui.select.down")) {
 			this.scrollOffset = Math.min(this.maxScroll(), this.scrollOffset + 1);
 			this.followTail = this.scrollOffset >= this.maxScroll();
-		} else if (this.keybindings.matches(data, "tui.select.pageUp")) {
+		} else if (this.keybindings.matches(data, "tui.editor.cursorLeft")) {
 			this.followTail = false;
 			this.scrollOffset = Math.max(0, this.scrollOffset - this.lastBodyHeight);
-		} else if (this.keybindings.matches(data, "tui.select.pageDown")) {
+		} else if (this.keybindings.matches(data, "tui.editor.cursorRight")) {
 			this.scrollOffset = Math.min(this.maxScroll(), this.scrollOffset + this.lastBodyHeight);
 			this.followTail = this.scrollOffset >= this.maxScroll();
-		} else if (matchesKey(data, "home")) {
+		} else if (data === "t") {
 			this.followTail = false;
 			this.scrollOffset = 0;
-		} else if (matchesKey(data, "end")) {
+		} else if (data === "b") {
 			this.followTail = true;
 			this.scrollOffset = this.maxScroll();
 		} else if (data === "r") {
@@ -387,7 +386,7 @@ export class AgentTranscriptViewer {
 			framedRule(this.theme, innerWidth, "├", "┤"),
 			framedRow(
 				this.theme,
-				` ${this.theme.fg("dim", `↑↓/PgUp/PgDn scroll · Home/End · Ctrl+O tools ${this.expandedTools ? "on" : "off"} · Ctrl+T thinking ${this.hideThinking ? "hidden" : "shown"} · r refresh · Esc back`)}`,
+				` ${this.theme.fg("dim", `↑/↓ move · ←/→ page · t top · b bottom · Ctrl+O tools ${this.expandedTools ? "on" : "off"} · Ctrl+T thinking ${this.hideThinking ? "hidden" : "shown"} · r refresh · Esc back`)}`,
 				innerWidth,
 			),
 			framedRow(this.theme, ` ${this.theme.fg("dim", snapshot ? `Read-only · created ${formatTimestamp(snapshot.createdAt)}` : "Read-only")}`, innerWidth),

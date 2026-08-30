@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.3 - 2026-08-31
+
+- Align transcript navigation with `/tree`: `↑`/`↓` move by line and `←`/`→` move by page.
+- Add distinct single-key jumps: `t` for the top and `b` for the bottom.
+- Remove duplicate `PageUp`/`PageDown` and `Home`/`End` aliases from the transcript viewer.
+
 ## 0.5.2 - 2026-08-30
 
 - Show each active sub-agent's full `provider/model` identifier in the live tree below the editor.
