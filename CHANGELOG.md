@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1 - 2026-08-30
+
+- Reuse each child session's original custom tool renderers in the read-only transcript viewer.
+- Match the main transcript's compact `web_search`, `fetch`, and other extension-tool presentation instead of dumping raw tool content.
+- Cache renderer definitions across child-session unloading and discover them without waking or loading a child when viewing restored sessions.
+
 ## 0.5.0 - 2026-08-30
 
 - Turn `/agents` into an interactive, user-only sub-agent session browser.

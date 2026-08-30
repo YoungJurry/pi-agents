@@ -34,7 +34,7 @@ Use the user-only `/agents` command to browse the current root session's sub-age
 /agents /root/api_research
 ```
 
-The picker shows lifecycle status, model, role, nickname, and residency. Selecting an agent opens its active session branch with normal Pi-style assistant messages, thinking, tool calls, tool results, and collaboration messages. Running sessions refresh while the viewer is open.
+The picker shows lifecycle status, model, role, nickname, and residency. Selecting an agent opens its active session branch with normal Pi-style assistant messages, thinking, tool calls, tool results, and collaboration messages. Custom tools reuse their original Pi renderers, so tools such as `web_search` and `fetch` stay as compact as they are in the main transcript. Running sessions refresh while the viewer is open.
 
 Viewer controls:
 

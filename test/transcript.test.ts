@@ -25,7 +25,7 @@ function createFixture() {
 	childSession.appendCustomMessageEntry(EXTENSION_ID, "delegated task", true);
 	childSession.appendMessage({
 		role: "assistant",
-		content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "README.md" } }],
+		content: [{ type: "toolCall", id: "call-1", name: "web_search", arguments: { queries: ["example"] } }],
 		api: "test",
 		provider: "test",
 		model: "test",
@@ -36,7 +36,7 @@ function createFixture() {
 	childSession.appendMessage({
 		role: "toolResult",
 		toolCallId: "call-1",
-		toolName: "read",
+		toolName: "web_search",
 		content: [{ type: "text", text: "file contents" }],
 		isError: false,
 		timestamp: 3,
@@ -100,10 +100,27 @@ test("loaded transcript strips the in-memory fork prefix", () => {
 	const fixture = createFixture();
 	try {
 		const persisted = fixture.control.transcript(fixture.ctx, fixture.childPath).messages;
-		fixture.record.session = { messages: [fixture.forkMessage, ...persisted] };
+		const webSearchDefinition = {
+			name: "web_search",
+			label: "Web Search",
+			description: "Search",
+			parameters: {},
+			execute: async () => ({ content: [] }),
+			renderResult: () => undefined,
+		} as any;
+		fixture.record.session = {
+			messages: [fixture.forkMessage, ...persisted],
+			getToolDefinition: (name: string) => name === "web_search" ? webSearchDefinition : undefined,
+		};
 		fixture.record.loaded = true;
 		const transcript = fixture.control.transcript(fixture.ctx, fixture.childPath);
 		assert.deepEqual(transcript.messages, persisted);
+		assert.deepEqual(transcript.toolDefinitions, [webSearchDefinition]);
+
+		fixture.record.session = undefined;
+		fixture.record.loaded = false;
+		const unloadedTranscript = fixture.control.transcript(fixture.ctx, fixture.childPath);
+		assert.deepEqual(unloadedTranscript.toolDefinitions, [webSearchDefinition]);
 	} finally {
 		fs.rmSync(fixture.directory, { recursive: true, force: true });
 	}

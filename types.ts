@@ -1,6 +1,6 @@
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
-import type { AgentSession, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 export const EXTENSION_ID = "codex-agents";
 export const STATE_ENTRY_TYPE = "codex-agents-state";
@@ -94,6 +94,7 @@ export interface AgentTranscriptView {
 	sessionFile: string;
 	cwd: string;
 	messages: AgentMessage[];
+	toolDefinitions: ToolDefinition[];
 	createdAt: number;
 	updatedAt: number;
 }

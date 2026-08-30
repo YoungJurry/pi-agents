@@ -239,6 +239,12 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 				}
 
 				try {
+					await control.prepareTranscriptToolDefinitions(ctx);
+				} catch (error) {
+					ctx.ui.notify(`Some custom tool renderers could not be loaded: ${error instanceof Error ? error.message : String(error)}`, "warning");
+				}
+
+				try {
 					control.transcript(ctx, targetPath);
 				} catch (error) {
 					ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
@@ -254,7 +260,6 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 						theme,
 						keybindings,
 						() => control.transcript(ctx, selectedPath),
-						tools,
 						(listener) => control.onChange(listener),
 						done,
 					),

@@ -137,6 +137,9 @@ export class AgentControl {
 	private rootStatus: AgentLifecycleStatus = "completed";
 	private rootStatusMessage?: string;
 	private tools: ToolDefinition[] = [];
+	private readonly transcriptToolDefinitions = new Map<string, ToolDefinition>();
+	private transcriptToolDefinitionsReady = false;
+	private transcriptToolDefinitionsPromise?: Promise<void>;
 	private modelRuntime?: ModelRuntime;
 	private modelRuntimePromise?: Promise<ModelRuntime>;
 	private activeExecutionSlots = 0;
@@ -155,6 +158,7 @@ export class AgentControl {
 
 	setTools(tools: ToolDefinition[]): void {
 		this.tools = tools;
+		for (const tool of tools) this.transcriptToolDefinitions.set(tool.name, tool);
 	}
 
 	onChange(listener: () => void): () => void {
@@ -504,6 +508,31 @@ export class AgentControl {
 		throw new Error(`model '${value}' not found`);
 	}
 
+	private captureTranscriptToolDefinitions(loader: DefaultResourceLoader): void {
+		for (const extension of loader.getExtensions().extensions) {
+			for (const registered of extension.tools.values()) {
+				if (!this.transcriptToolDefinitions.has(registered.definition.name)) {
+					this.transcriptToolDefinitions.set(registered.definition.name, registered.definition);
+				}
+			}
+		}
+		this.transcriptToolDefinitionsReady = true;
+	}
+
+	async prepareTranscriptToolDefinitions(ctx: ExtensionContext): Promise<void> {
+		if (this.transcriptToolDefinitionsReady) return;
+		if (!this.transcriptToolDefinitionsPromise) {
+			const settingsManager = SettingsManager.create(ctx.cwd, getAgentDir());
+			this.transcriptToolDefinitionsPromise = this.createLoader(ctx.cwd, settingsManager, "")
+				.then(() => undefined)
+				.catch((error) => {
+					this.transcriptToolDefinitionsPromise = undefined;
+					throw error;
+				});
+		}
+		await this.transcriptToolDefinitionsPromise;
+	}
+
 	private async createLoader(cwd: string, settingsManager: SettingsManager, instructions: string): Promise<DefaultResourceLoader> {
 		const selfPath = path.resolve(this.selfExtensionPath);
 		const loader = new DefaultResourceLoader({
@@ -517,6 +546,7 @@ export class AgentControl {
 			systemPromptOverride: (base) => `${base || "You are a coding agent."}\n\n${instructions}`,
 		});
 		await loader.reload();
+		this.captureTranscriptToolDefinitions(loader);
 		return loader;
 	}
 
@@ -901,11 +931,26 @@ export class AgentControl {
 		const messages = record.session
 			? structuredClone(record.session.messages.slice(forkContextLength))
 			: structuredClone(sessionManager.buildSessionContext().messages);
+		const toolNames = new Set<string>();
+		for (const message of messages) {
+			if (message.role !== "assistant") continue;
+			for (const block of message.content) {
+				if (block.type === "toolCall") toolNames.add(block.name);
+			}
+		}
+		const toolDefinitions: ToolDefinition[] = [];
+		for (const name of toolNames) {
+			const liveDefinition = record.session?.getToolDefinition(name);
+			if (liveDefinition) this.transcriptToolDefinitions.set(name, liveDefinition);
+			const definition = liveDefinition ?? this.transcriptToolDefinitions.get(name);
+			if (definition) toolDefinitions.push(definition);
+		}
 		return {
 			agent: this.view(record),
 			sessionFile: record.sessionFile,
 			cwd: sessionManager.getCwd(),
 			messages,
+			toolDefinitions,
 			createdAt: record.createdAt,
 			updatedAt: record.updatedAt,
 		};

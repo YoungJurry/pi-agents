@@ -187,18 +187,16 @@ export class AgentTranscriptViewer {
 	private lastBodyLines = 0;
 	private refreshTimer?: ReturnType<typeof setTimeout>;
 	private readonly unsubscribe: () => void;
-	private readonly toolDefinitions: Map<string, ToolDefinition>;
+	private toolDefinitions = new Map<string, ToolDefinition>();
 
 	constructor(
 		private readonly tui: TUI,
 		private readonly theme: Theme,
 		private readonly keybindings: KeybindingsManager,
 		private readonly loadTranscript: () => AgentTranscriptView,
-		toolDefinitions: ToolDefinition[],
 		subscribe: ChangeSubscriber,
 		private readonly done: () => void,
 	) {
-		this.toolDefinitions = new Map(toolDefinitions.map((tool) => [tool.name, tool]));
 		this.refresh();
 		this.unsubscribe = subscribe(() => this.scheduleRefresh());
 	}
@@ -215,6 +213,7 @@ export class AgentTranscriptViewer {
 	private refresh(): void {
 		try {
 			this.snapshot = this.loadTranscript();
+			this.toolDefinitions = new Map(this.snapshot.toolDefinitions.map((tool) => [tool.name, tool]));
 			this.error = undefined;
 			this.rebuildContent();
 		} catch (error) {
