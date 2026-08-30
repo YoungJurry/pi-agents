@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 - 2026-08-30
+
+- Turn `/agents` into an interactive, user-only sub-agent session browser.
+- Add read-only Pi-style transcript viewing for assistant output, thinking, tool calls, tool results, and collaboration messages.
+- Support `/agents <path>` direct opening and agent-path argument completion.
+- Refresh running transcripts without switching, waking, or loading child sessions.
+- Keep the inspector out of all model-facing prompts, messages, and tool schemas.
+
 ## 0.4.1 - 2026-08-15
 
 - Remove test-only dependencies from the published package manifest so Pi Git installs stay dependency-free.

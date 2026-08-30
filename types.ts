@@ -89,6 +89,15 @@ export interface AgentView {
 	finalAnswer?: string;
 }
 
+export interface AgentTranscriptView {
+	agent: AgentView;
+	sessionFile: string;
+	cwd: string;
+	messages: AgentMessage[];
+	createdAt: number;
+	updatedAt: number;
+}
+
 export interface AgentToolCatalogEntry {
 	name: string;
 	description: string;

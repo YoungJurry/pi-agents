@@ -25,6 +25,27 @@ The model queries `list_agents(view="tools")` for the action catalog and, when n
 
 Completion notices are intentionally small. Full answers enter the parent context only when explicitly requested with `list_agents(view="results")`.
 
+## Inspect sub-agent sessions
+
+Use the user-only `/agents` command to browse the current root session's sub-agents and open a read-only transcript:
+
+```text
+/agents
+/agents /root/api_research
+```
+
+The picker shows lifecycle status, model, role, nickname, and residency. Selecting an agent opens its active session branch with normal Pi-style assistant messages, thinking, tool calls, tool results, and collaboration messages. Running sessions refresh while the viewer is open.
+
+Viewer controls:
+
+- `↑` / `↓`, `PageUp` / `PageDown`, `Home` / `End`: scroll
+- `Ctrl+O`: expand or collapse tool output
+- `Ctrl+T`: show or hide thinking
+- `r`: refresh immediately
+- `Escape`: return to the agent picker
+
+This inspector is implemented only as a slash command and TUI overlay. It does not register an LLM tool, alter tool schemas or system prompts, add messages to the root context, switch sessions, wake agents, or expose child sessions through the normal `/resume` picker.
+
 ## Tools
 
 Only two compact collaboration schemas remain active:
@@ -101,7 +122,7 @@ Global sub-agent settings live outside the installed package so updates cannot o
 
 ```json
 {
-  "defaultModel": "opencode/deepseek-v4-flash-free"
+  "defaultModel": "opencode-go/ox-alpha-free"
 }
 ```
 
@@ -135,4 +156,4 @@ The settings file is optional. Invalid JSON, an empty `defaultModel`, or an unav
 - In non-interactive modes, permission extensions such as `permission-gate.ts` fail closed
 - All agents share the same cwd and filesystem
 
-Use `/agents` for the full tree. A compact live tree appears below the editor while child agents exist.
+Use `/agents` to browse the tree and inspect read-only child transcripts. A compact live tree appears below the editor while child agents exist.

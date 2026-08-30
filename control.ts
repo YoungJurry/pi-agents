@@ -37,6 +37,7 @@ import {
 	type AgentLifecycleStatus,
 	type AgentRecord,
 	type AgentRoleView,
+	type AgentTranscriptView,
 	type AgentView,
 	type ForkContextPayload,
 	type PersistedAgent,
@@ -886,6 +887,28 @@ export class AgentControl {
 		return views
 			.filter((agent) => !resolvedPrefix || agent.path === resolvedPrefix || agent.path.startsWith(`${resolvedPrefix}/`))
 			.sort((left, right) => left.path.localeCompare(right.path));
+	}
+
+	transcript(ctx: ExtensionContext, reference: string): AgentTranscriptView {
+		const callerPath = this.callerPath(ctx);
+		const target = this.requireTarget(callerPath, reference);
+		if (target.path === ROOT_PATH) throw new Error("the root transcript is already visible in the main session");
+		const record = target.record!;
+		if (!record.sessionFile) throw new Error(`agent ${record.path} has no persisted session file`);
+
+		const sessionManager = SessionManager.open(record.sessionFile);
+		const forkContextLength = this.forkContextFromSessionManager(sessionManager).length;
+		const messages = record.session
+			? structuredClone(record.session.messages.slice(forkContextLength))
+			: structuredClone(sessionManager.buildSessionContext().messages);
+		return {
+			agent: this.view(record),
+			sessionFile: record.sessionFile,
+			cwd: sessionManager.getCwd(),
+			messages,
+			createdAt: record.createdAt,
+			updatedAt: record.updatedAt,
+		};
 	}
 
 	listRoles(ctx: ExtensionContext): AgentRoleView[] {

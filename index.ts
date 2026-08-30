@@ -5,6 +5,7 @@ import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { AgentControl } from "./control.ts";
 import { createCollaborationTools } from "./tools.ts";
 import { EXTENSION_ID, ROOT_PATH, type AgentLifecycleStatus, type AgentView } from "./types.ts";
+import { AgentPickerComponent, AgentTranscriptViewer } from "./viewer.ts";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
 const WIDGET_KEY = "codex-agents-tree";
@@ -72,17 +73,6 @@ class AgentTreeWidget {
 	}
 
 	invalidate(): void {}
-}
-
-function renderAgentList(agents: AgentView[], theme: Theme, width: number): string[] {
-	const lines = [theme.fg("accent", theme.bold("Codex-style agent tree")), ""];
-	for (const agent of agents) {
-		lines.push(treeLine(agent, theme));
-		lines.push(truncateToWidth(`   ${theme.fg("dim", `${agent.status} · ${agent.model}${agent.role ? ` · ${agent.role}` : ""}`)}`, width));
-		if (agent.statusMessage) lines.push(truncateToWidth(`   ${theme.fg("error", agent.statusMessage)}`, width));
-	}
-	lines.push("", theme.fg("dim", "Escape or Enter to close"));
-	return lines.map((line) => truncateToWidth(line, Math.max(1, width)));
 }
 
 export default function codexAgentsExtension(pi: ExtensionAPI): void {
@@ -190,22 +180,91 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("agents", {
-		description: "Show the Codex-style agent tree and lifecycle status",
-		handler: async (_args, ctx) => {
+		description: "Browse sub-agent status and inspect read-only session transcripts",
+		getArgumentCompletions: (prefix) => {
+			const ctx = activeContext;
+			if (!ctx) return null;
+			const query = prefix.trim();
+			let agents: AgentView[];
+			try {
+				agents = control.list(ctx).filter((agent) => agent.path !== ROOT_PATH);
+			} catch {
+				return null;
+			}
+			const matches = agents
+				.filter((agent) => !query || agent.path.startsWith(query))
+				.map((agent) => ({
+					value: agent.path,
+					label: agent.path,
+					description: `${agent.status} · ${agent.model}`,
+				}));
+			return matches.length > 0 ? matches : null;
+		},
+		handler: async (args, ctx) => {
 			activeContext = ctx;
-			const agents = control.list(ctx);
+			const requestedPath = args.trim();
 			if (ctx.mode !== "tui") {
-				ctx.ui.notify(agents.map((agent) => `${agent.path}: ${agent.status}`).join("\n"), "info");
+				if (requestedPath) {
+					try {
+						const transcript = control.transcript(ctx, requestedPath);
+						ctx.ui.notify(`${transcript.agent.path}: ${transcript.agent.status} · ${transcript.messages.length} messages\n${transcript.sessionFile}`, "info");
+					} catch (error) {
+						ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+					}
+					return;
+				}
+				const agents = control.list(ctx).filter((agent) => agent.path !== ROOT_PATH);
+				ctx.ui.notify(agents.length > 0 ? agents.map((agent) => `${agent.path}: ${agent.status}`).join("\n") : "No sub-agents in this root session", "info");
 				return;
 			}
-			await ctx.ui.custom<void>((tui, theme, _keybindings, done) => ({
-				render: (width) => renderAgentList(agents, theme, width),
-				handleInput: (data) => {
-					if (data === "\u001b" || data === "\r" || data === "\n") done();
-					tui.requestRender();
-				},
-				invalidate() {},
-			}), { overlay: true, overlayOptions: { anchor: "right-center", width: "55%", maxHeight: "80%", margin: 1 } });
+
+			let targetPath = requestedPath || undefined;
+			while (true) {
+				if (!targetPath) {
+					targetPath = await ctx.ui.custom<string | undefined>(
+						(tui, theme, keybindings, done) => new AgentPickerComponent(
+							tui,
+							theme,
+							keybindings,
+							() => control.list(ctx),
+							(listener) => control.onChange(listener),
+							done,
+						),
+						{
+							overlay: true,
+							overlayOptions: { anchor: "center", width: "68%", maxHeight: "82%", margin: 1 },
+						},
+					);
+					if (!targetPath) return;
+				}
+
+				try {
+					control.transcript(ctx, targetPath);
+				} catch (error) {
+					ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+					if (requestedPath) return;
+					targetPath = undefined;
+					continue;
+				}
+
+				const selectedPath = targetPath;
+				await ctx.ui.custom<void>(
+					(tui, theme, keybindings, done) => new AgentTranscriptViewer(
+						tui,
+						theme,
+						keybindings,
+						() => control.transcript(ctx, selectedPath),
+						tools,
+						(listener) => control.onChange(listener),
+						done,
+					),
+					{
+						overlay: true,
+						overlayOptions: { anchor: "center", width: "92%", maxHeight: "92%", margin: 1 },
+					},
+				);
+				targetPath = undefined;
+			}
 		},
 	});
 }
