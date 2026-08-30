@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.2 - 2026-08-30
+
+- Show each active sub-agent's full `provider/model` identifier in the live tree below the editor.
+- Preserve terminal-width truncation for long model names.
+
 ## 0.5.1 - 2026-08-30
 
 - Reuse each child session's original custom tool renderers in the read-only transcript viewer.

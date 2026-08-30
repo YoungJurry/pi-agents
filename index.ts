@@ -42,7 +42,8 @@ function treeLine(agent: AgentView, theme: Theme): string {
 	const icon = theme.fg(statusColor(agent.status), statusIcon(agent.status));
 	const residency = agent.path === ROOT_PATH || agent.loaded ? "" : theme.fg("dim", " [unloaded]");
 	const nickname = agent.nickname ? theme.fg("muted", ` (${agent.nickname})`) : "";
-	return `${indent}${branch}${icon} ${theme.fg("accent", name)}${nickname}${residency}`;
+	const model = agent.path === ROOT_PATH ? "" : theme.fg("dim", ` · ${agent.model}`);
+	return `${indent}${branch}${icon} ${theme.fg("accent", name)}${nickname}${residency}${model}`;
 }
 
 class AgentTreeWidget {

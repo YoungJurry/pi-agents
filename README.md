@@ -156,4 +156,4 @@ The settings file is optional. Invalid JSON, an empty `defaultModel`, or an unav
 - In non-interactive modes, permission extensions such as `permission-gate.ts` fail closed
 - All agents share the same cwd and filesystem
 
-Use `/agents` to browse the tree and inspect read-only child transcripts. A compact live tree appears below the editor while child agents exist.
+Use `/agents` to browse the tree and inspect read-only child transcripts. A compact live tree appears below the editor while child agents exist and shows each active agent's `provider/model` identifier.
