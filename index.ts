@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { AgentControl } from "./control.ts";
+import { getAgentSettingsPath, loadAgentSettings, resolveAgentLimits } from "./settings.ts";
 import { createCollaborationTools } from "./tools.ts";
 import { EXTENSION_ID, ROOT_PATH, type AgentLifecycleStatus, type AgentView } from "./types.ts";
 import { AgentPickerComponent, AgentTranscriptViewer } from "./viewer.ts";
@@ -14,6 +15,7 @@ const PROMPT_MARKER = "<multi_agent_role>";
 
 function statusIcon(status: AgentLifecycleStatus): string {
 	switch (status) {
+		case "queued": return "◷";
 		case "running": return "●";
 		case "completed": return "✓";
 		case "errored": return "✗";
@@ -25,6 +27,7 @@ function statusIcon(status: AgentLifecycleStatus): string {
 
 function statusColor(status: AgentLifecycleStatus): "success" | "error" | "warning" | "muted" | "dim" {
 	switch (status) {
+		case "queued": return "dim";
 		case "running": return "warning";
 		case "completed": return "success";
 		case "errored": return "error";
@@ -40,7 +43,9 @@ function treeLine(agent: AgentView, theme: Theme): string {
 	const branch = depth > 0 ? "└─ " : "";
 	const name = agent.path === ROOT_PATH ? ROOT_PATH : agent.path.split("/").at(-1) || agent.path;
 	const icon = theme.fg(statusColor(agent.status), statusIcon(agent.status));
-	const residency = agent.path === ROOT_PATH || agent.loaded ? "" : theme.fg("dim", " [unloaded]");
+	const residency = agent.status === "queued"
+		? theme.fg("warning", ` [waiting #${agent.queuePosition ?? "?"}]`)
+		: agent.path === ROOT_PATH || agent.loaded ? "" : theme.fg("dim", " [unloaded]");
 	const nickname = agent.nickname ? theme.fg("muted", ` (${agent.nickname})`) : "";
 	const model = agent.path === ROOT_PATH ? "" : theme.fg("dim", ` · ${agent.model}`);
 	return `${indent}${branch}${icon} ${theme.fg("accent", name)}${nickname}${residency}${model}`;
@@ -62,14 +67,15 @@ class AgentTreeWidget {
 		} catch {
 			return [];
 		}
-		const activeAgents = agents.filter((agent) => agent.path !== ROOT_PATH && (agent.status === "running" || agent.status === "pending_init"));
-		if (activeAgents.length === 0) return [];
+		const visibleAgents = agents.filter((agent) => agent.path !== ROOT_PATH && (agent.status === "running" || agent.status === "pending_init" || agent.status === "queued"));
+		if (visibleAgents.length === 0) return [];
 		const counts = this.control.getCounts();
+		const queueSummary = counts.queued > 0 ? ` · queued: ${counts.queued}` : "";
 		const lines = [
-			this.theme.fg("muted", `Agents active: ${activeAgents.length} · limit: ${counts.slots}`),
-			...activeAgents.slice(0, 8).map((agent) => treeLine(agent, this.theme)),
+			this.theme.fg("muted", `Agents active: ${counts.running}/${counts.slots}${queueSummary}`),
+			...visibleAgents.slice(0, 8).map((agent) => treeLine(agent, this.theme)),
 		];
-		if (activeAgents.length > 8) lines.push(this.theme.fg("dim", `  … ${activeAgents.length - 8} more; use /agents`));
+		if (visibleAgents.length > 8) lines.push(this.theme.fg("dim", `  … ${visibleAgents.length - 8} more; use /agents`));
 		return lines.map((line) => truncateToWidth(line, Math.max(1, width)));
 	}
 
@@ -77,7 +83,13 @@ class AgentTreeWidget {
 }
 
 export default function codexAgentsExtension(pi: ExtensionAPI): void {
-	const control = new AgentControl(pi, path.resolve(SELF_PATH));
+	const limits = resolveAgentLimits(loadAgentSettings(), getAgentSettingsPath());
+	const control = new AgentControl(
+		pi,
+		path.resolve(SELF_PATH),
+		limits.maxConcurrentSubagents,
+		limits.maxResidentSubagents,
+	);
 	const tools = createCollaborationTools(control);
 	control.setTools(tools);
 	for (const tool of tools) pi.registerTool(tool);
@@ -89,14 +101,19 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 		const ctx = activeContext;
 		if (!ctx) return;
 		let activeAgentCount = 0;
+		let queuedAgentCount = 0;
 		try {
-			activeAgentCount = control.list(ctx).filter((agent) => agent.path !== ROOT_PATH && (agent.status === "running" || agent.status === "pending_init")).length;
+			const counts = control.getCounts();
+			activeAgentCount = counts.running;
+			queuedAgentCount = counts.queued;
 		} catch {
 			// Root context can be transiently unavailable during reload/shutdown.
 		}
 		ctx.ui.setStatus(
 			STATUS_KEY,
-			activeAgentCount > 0 ? ctx.ui.theme.fg("warning", `agents ${activeAgentCount} active`) : undefined,
+			activeAgentCount > 0 || queuedAgentCount > 0
+				? ctx.ui.theme.fg("warning", `agents ${activeAgentCount} active${queuedAgentCount > 0 ? ` · ${queuedAgentCount} waiting` : ""}`)
+				: undefined,
 		);
 		widgetTui?.requestRender();
 	};

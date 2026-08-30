@@ -17,6 +17,14 @@ import type {
 
 const ThinkingLevelSchema = StringEnum(["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const);
 const AgentListViewSchema = StringEnum(["roles", "tools", "status", "results"] as const);
+const SpawnAgentItemSchema = Type.Object({
+	message: Type.String({ description: "Task to assign to the child agent" }),
+	task_name: Type.String({ description: "Unique lowercase name using letters, digits, and underscores" }),
+	agent_type: Type.Optional(Type.String({ description: "Optional role name returned by list_agents(view=\"roles\"); omit for general-purpose work" })),
+	model: Type.Optional(Type.String({ description: "Optional provider/model override" })),
+	reasoning_effort: Type.Optional(ThinkingLevelSchema),
+	fork_turns: Type.Optional(Type.String({ description: "none, all, or a positive integer string; defaults to all" })),
+});
 
 function details(tool: CollaborationToolName, sender: string, targets: AgentView[], message?: string, timedOut?: boolean): CollaborationDetails {
 	return { tool, sender, targets, message, timedOut };
@@ -29,7 +37,8 @@ function result<T extends CollaborationDetails>(text: string, value: T): AgentTo
 function compactStatus(agent: AgentView): string {
 	const residency = agent.loaded ? "loaded" : "unloaded";
 	const nickname = agent.nickname ? ` (${agent.nickname})` : "";
-	return `${agent.path}${nickname}: ${agent.status}, ${residency}`;
+	const waiting = agent.status === "queued" ? `, waiting at queue position ${agent.queuePosition ?? "?"}` : "";
+	return `${agent.path}${nickname}: ${agent.status}${waiting}, ${residency}`;
 }
 
 function catalogParameters(entry: AgentToolCatalogEntry): string {
@@ -89,36 +98,40 @@ function renderCollaborationResult(
 }
 
 export function createCollaborationTools(control: AgentControl): ToolDefinition[] {
-	const spawnAgent = defineTool({
-		name: "spawn_agent",
-		label: "Spawn Agent",
-		description: "Delegate a concrete, bounded subtask that can run independently; returns its path immediately.",
+	const spawnAgents = defineTool({
+		name: "spawn_agents",
+		label: "Spawn Agents",
+		description: "Create one or more independent child agents in one call; available execution slots start immediately and overflow waits in a visible persistent queue.",
 		parameters: Type.Object({
-			message: Type.String({ description: "Task to assign to the child agent" }),
-			task_name: Type.String({ description: "Unique lowercase name using letters, digits, and underscores" }),
-			agent_type: Type.Optional(Type.String({ description: "Optional role name returned by list_agents(view=\"roles\"); omit for general-purpose work" })),
-			model: Type.Optional(Type.String({ description: "Optional provider/model override" })),
-			reasoning_effort: Type.Optional(ThinkingLevelSchema),
-			fork_turns: Type.Optional(Type.String({ description: "none, all, or a positive integer string; defaults to all" })),
+			agents: Type.Array(SpawnAgentItemSchema, { minItems: 1, description: "One or more independent child tasks" }),
 		}),
 		async execute(_id, params, _signal, onUpdate, ctx) {
 			const sender = control.callerPath(ctx);
-			onUpdate?.(result("Creating child AgentSession…", details("spawn_agent", sender, [], params.message)));
-			const agent = await control.spawn(ctx, {
-				message: params.message,
-				taskName: params.task_name,
-				agentType: params.agent_type,
-				model: params.model,
-				thinkingLevel: params.reasoning_effort,
-				forkTurns: params.fork_turns,
-			});
+			onUpdate?.(result(`Preparing ${params.agents.length} child task${params.agents.length === 1 ? "" : "s"}…`, details("spawn_agents", sender, [])));
+			const agents = await control.spawnMany(ctx, params.agents.map((agent) => ({
+				message: agent.message,
+				taskName: agent.task_name,
+				agentType: agent.agent_type,
+				model: agent.model,
+				thinkingLevel: agent.reasoning_effort,
+				forkTurns: agent.fork_turns,
+			})));
+			const capacity = control.getCounts();
 			return result(
-				JSON.stringify({ task_name: agent.path, nickname: agent.nickname, status: agent.status }),
-				details("spawn_agent", sender, [agent], params.message),
+				JSON.stringify({
+					agents: agents.map((agent) => ({
+						path: agent.path,
+						nickname: agent.nickname,
+						status: agent.status,
+						queue_position: agent.queuePosition,
+					})),
+					capacity,
+				}),
+				details("spawn_agents", sender, agents, `${agents.length} tasks accepted`),
 			);
 		},
 		renderCall(args, theme) {
-			return renderCallHeader("spawn_agent", `${args.task_name} ← ${args.message}`, theme);
+			return renderCallHeader("spawn_agents", `${args.agents.length} · ${args.agents.map((agent) => agent.task_name).join(", ")}`, theme);
 		},
 		renderResult: renderCollaborationResult,
 	});
@@ -206,7 +219,7 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 		renderResult: renderCollaborationResult,
 	});
 
-	const directTools = [spawnAgent, sendMessage, followupTask, waitAgent, interruptAgent];
+	const directTools = [spawnAgents, sendMessage, followupTask, waitAgent, interruptAgent];
 	const toolCatalog: AgentToolCatalogEntry[] = directTools.map((tool) => ({
 		name: tool.name,
 		description: tool.description,
@@ -271,7 +284,8 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 				);
 			}
 			const agents = control.list(ctx, params.path_prefix, params.view === "results");
-			return result(JSON.stringify({ agents }), details("list_agents", sender, agents));
+			const payload = params.view === "status" ? { agents, capacity: control.getCounts() } : { agents };
+			return result(JSON.stringify(payload), details("list_agents", sender, agents));
 		},
 		renderCall(args, theme) {
 			const scope = args.path_prefix ? `${args.view} · ${args.path_prefix}` : args.view;

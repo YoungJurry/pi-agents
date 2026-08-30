@@ -24,7 +24,12 @@ import {
 	sanitizeForkMessages,
 } from "./context.ts";
 import { discoverRoles, resolveRole } from "./roles.ts";
-import { loadAgentSettings, selectAgentModel } from "./settings.ts";
+import {
+	DEFAULT_MAX_CONCURRENT_SUBAGENTS,
+	DEFAULT_MAX_RESIDENT_SUBAGENTS,
+	loadAgentSettings,
+	selectAgentModel,
+} from "./settings.ts";
 import {
 	AGENT_GATEWAY_TOOL_NAMES,
 	CHILD_META_ENTRY_TYPE,
@@ -34,8 +39,10 @@ import {
 	FORK_CONTEXT_ENTRY_TYPE,
 	ROOT_PATH,
 	STATE_ENTRY_TYPE,
+	type AgentCounts,
 	type AgentLifecycleStatus,
 	type AgentRecord,
+	type AgentRole,
 	type AgentRoleView,
 	type AgentTranscriptView,
 	type AgentView,
@@ -45,8 +52,6 @@ import {
 	type RootBinding,
 } from "./types.ts";
 
-const DEFAULT_MAX_CONCURRENT_SUBAGENTS = 3;
-const DEFAULT_MAX_RESIDENT_SUBAGENTS = 3;
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const MIN_WAIT_TIMEOUT_MS = 10_000;
 const MAX_WAIT_TIMEOUT_MS = 3_600_000;
@@ -56,13 +61,23 @@ const DEFAULT_NICKNAMES = [
 	"Frances", "Claude", "Hopper", "Turing", "Lovelace", "Shannon", "Knuth", "Dijkstra",
 ];
 
-interface SpawnRequest {
+export interface SpawnRequest {
 	message: string;
 	taskName: string;
 	agentType?: string;
 	model?: string;
 	thinkingLevel?: ThinkingLevel;
 	forkTurns?: string;
+}
+
+interface PreparedSpawn {
+	request: SpawnRequest;
+	childPath: string;
+	callerPath: string;
+	role: AgentRole;
+	selectedModel: Model<any>;
+	thinkingLevel?: ThinkingLevel;
+	forkMessages: AgentMessage[];
 }
 
 interface MessageRequest {
@@ -114,6 +129,8 @@ function clonePersisted(record: AgentRecord): PersistedAgent {
 		createdAt: record.createdAt,
 		updatedAt: record.updatedAt,
 		lastUsedAt: record.lastUsedAt,
+		queuedMessage: record.queuedMessage,
+		queuedMail: record.queuedMail,
 	};
 }
 
@@ -126,7 +143,6 @@ function isPersistedState(value: unknown): value is PersistedTreeState {
 export class AgentControl {
 	private readonly agentsByPath = new Map<string, AgentRecord>();
 	private readonly pathBySessionId = new Map<string, string>();
-	private readonly pendingPaths = new Set<string>();
 	private readonly mailboxPending = new Map<string, number>();
 	private readonly waiters = new Map<string, Set<StateWaiter>>();
 	private readonly listeners = new Set<() => void>();
@@ -143,7 +159,10 @@ export class AgentControl {
 	private modelRuntime?: ModelRuntime;
 	private modelRuntimePromise?: Promise<ModelRuntime>;
 	private activeExecutionSlots = 0;
+	private schedulerPromise?: Promise<void>;
+	private spawnOperationTail: Promise<void> = Promise.resolve();
 	private disposed = false;
+	private shuttingDown = false;
 	private uiDialogTail: Promise<void> = Promise.resolve();
 	private readonly rootStorageDirectory = path.join(getAgentDir(), "codex-agents", "roots");
 	private childSessionDirectory = path.join(getAgentDir(), "codex-agents", "sessions");
@@ -176,8 +195,14 @@ export class AgentControl {
 		return result;
 	}
 
+	private enqueueSpawnOperation<T>(operation: () => Promise<T>): Promise<T> {
+		const result = this.spawnOperationTail.then(operation, operation);
+		this.spawnOperationTail = result.then(() => undefined, () => undefined);
+		return result;
+	}
+
 	private configureChildTools(session: NonNullable<AgentRecord["session"]>): void {
-		const hidden = new Set<string>(DIRECT_AGENT_TOOL_NAMES);
+		const hidden = new Set<string>([...DIRECT_AGENT_TOOL_NAMES, "spawn_agent"]);
 		const active = session.getActiveToolNames().filter((name) => !hidden.has(name));
 		for (const name of AGENT_GATEWAY_TOOL_NAMES) {
 			if (!active.includes(name) && session.getToolDefinition(name)) active.push(name);
@@ -286,6 +311,7 @@ export class AgentControl {
 
 	bindRoot(ctx: ExtensionContext): void {
 		this.disposed = false;
+		this.shuttingDown = false;
 		const sessionId = ctx.sessionManager.getSessionId();
 		this.configureRootStorage(ctx, sessionId);
 		const changedSession = this.root?.sessionId !== sessionId;
@@ -300,6 +326,7 @@ export class AgentControl {
 		this.pathBySessionId.set(sessionId, ROOT_PATH);
 		if (changedSession) this.restoreState(ctx);
 		this.changed();
+		void this.scheduleQueued();
 	}
 
 	refreshRootContext(ctx: ExtensionContext): void {
@@ -383,7 +410,7 @@ export class AgentControl {
 	}
 
 	configureInitialRootTools(): void {
-		const hidden = new Set<string>(DIRECT_AGENT_TOOL_NAMES);
+		const hidden = new Set<string>([...DIRECT_AGENT_TOOL_NAMES, "spawn_agent"]);
 		const current = this.pi.getActiveTools();
 		const next = current.filter((name) => !hidden.has(name));
 		for (const name of AGENT_GATEWAY_TOOL_NAMES) {
@@ -636,6 +663,7 @@ export class AgentControl {
 			this.releaseExecutionSlot(record);
 			this.persistState();
 			this.changed();
+			void this.scheduleQueued();
 			return;
 		}
 		if (answer.error) {
@@ -651,6 +679,7 @@ export class AgentControl {
 		this.releaseExecutionSlot(record);
 		this.persistState();
 		this.changed();
+		void this.scheduleQueued();
 		void this.deliver(record.path, record.parentPath, this.completionNotice(record), false, "AGENT_STATUS").catch(() => {});
 	}
 
@@ -691,111 +720,182 @@ export class AgentControl {
 			record.updatedAt = Date.now();
 			this.releaseExecutionSlot(record);
 			this.persistState();
+			void this.scheduleQueued();
 			this.changed();
 			void this.deliver(record.path, record.parentPath, this.completionNotice(record), false, "AGENT_STATUS").catch(() => {});
 		}).finally(() => {
 			if (generation === record.launchGeneration && record.status === "running" && session.isIdle) {
 				record.status = "completed";
 				this.releaseExecutionSlot(record);
+				void this.scheduleQueued();
 			}
 			this.changed();
 		});
 	}
 
-	async spawn(ctx: ExtensionContext, request: SpawnRequest): Promise<AgentView> {
-		if (this.disposed) throw new Error("agent control is shutting down");
+	private async prepareSpawnBatch(ctx: ExtensionContext, requests: SpawnRequest[]): Promise<PreparedSpawn[]> {
+		if (this.disposed || this.shuttingDown) throw new Error("agent control is shutting down");
+		if (requests.length === 0) throw new Error("agents must contain at least one task");
 		const callerPath = this.callerPath(ctx);
-		const taskName = normalizeAgentName(request.taskName);
-		const childPath = `${callerPath}/${taskName}`;
-		if (this.agentsByPath.has(childPath) || this.pendingPaths.has(childPath)) {
-			throw new Error(`agent path '${childPath}' already exists`);
-		}
-		if (!request.message.trim()) throw new Error("message must not be empty");
-		const forkMode = parseForkMode(request.forkTurns);
-		this.pendingPaths.add(childPath);
-		let slotReserved = false;
-		try {
-			await this.evictForResidency(callerPath);
-			this.reserveExecutionSlot();
-			slotReserved = true;
+		const callerMessages = this.callerMessages(ctx);
+		const settings = loadAgentSettings();
+		const seenPaths = new Set<string>();
+		const prepared: PreparedSpawn[] = [];
+		for (const request of requests) {
+			const taskName = normalizeAgentName(request.taskName);
+			const childPath = `${callerPath}/${taskName}`;
+			if (seenPaths.has(childPath)) throw new Error(`agent path '${childPath}' is duplicated in this batch`);
+			if (this.agentsByPath.has(childPath)) {
+				throw new Error(`agent path '${childPath}' already exists`);
+			}
+			if (!request.message.trim()) throw new Error(`message for '${taskName}' must not be empty`);
+			seenPaths.add(childPath);
 			const role = resolveRole(ctx.cwd, ctx.isProjectTrusted(), request.agentType);
-			const settings = loadAgentSettings();
 			const selectedModel = await this.resolveModel(
 				ctx,
 				selectAgentModel(request.model, role.model, settings.defaultModel),
 			);
-			const thinkingLevel = request.thinkingLevel || role.thinkingLevel || ctx.thinkingLevel;
-			const forkMessages = sanitizeForkMessages(this.callerMessages(ctx), forkMode);
-			const sessionManager = SessionManager.create(ctx.cwd, this.childSessionDirectory);
-			const now = Date.now();
-			const record: AgentRecord = {
-				id: sessionManager.getSessionId(),
-				path: childPath,
-				parentPath: callerPath,
-				parentId: callerPath === ROOT_PATH ? this.root!.sessionId : this.agentsByPath.get(callerPath)!.id,
-				taskName,
-				nickname: this.reserveNickname(role.nicknameCandidates),
-				role: role.name,
-				modelProvider: selectedModel.provider,
-				modelId: selectedModel.id,
-				thinkingLevel,
-				status: "pending_init",
-				createdAt: now,
-				updatedAt: now,
-				lastUsedAt: now,
-				loaded: false,
-				holdsExecutionSlot: true,
-				launchGeneration: 0,
-			};
-			sessionManager.appendCustomEntry(CHILD_META_ENTRY_TYPE, {
-				path: record.path,
-				parentPath: record.parentPath,
-				role: record.role,
+			prepared.push({
+				request: { ...request, taskName },
+				childPath,
+				callerPath,
+				role,
+				selectedModel,
+				thinkingLevel: request.thinkingLevel || role.thinkingLevel || ctx.thinkingLevel,
+				forkMessages: sanitizeForkMessages(callerMessages, parseForkMode(request.forkTurns)),
 			});
-			sessionManager.appendCustomEntry(FORK_CONTEXT_ENTRY_TYPE, { messages: forkMessages });
-			const settingsManager = SettingsManager.create(ctx.cwd, getAgentDir());
-			const loader = await this.createLoader(ctx.cwd, settingsManager, this.childInstructions(record, role.systemPrompt));
-			const runtime = await this.getModelRuntime(ctx);
-			const allowedTools = role.tools
-				? [...new Set([...role.tools, ...COLLABORATION_TOOL_NAMES])]
-				: undefined;
-			const { session } = await createAgentSession({
-				cwd: ctx.cwd,
-				agentDir: getAgentDir(),
-				modelRuntime: runtime,
-				model: selectedModel,
-				thinkingLevel,
-				tools: allowedTools,
-				customTools: this.tools,
-				resourceLoader: loader,
-				sessionManager,
-				settingsManager,
-			});
-			this.configureChildTools(session);
-			record.session = session;
-			this.attachRootUi(record, session);
-			record.sessionFile = session.sessionFile;
-			record.loaded = true;
-			if (forkMessages.length > 0) session.agent.state.messages = forkMessages;
+		}
+		return prepared;
+	}
+
+	private materializeQueuedBatch(ctx: ExtensionContext, prepared: PreparedSpawn[]): AgentRecord[] {
+		const records: AgentRecord[] = [];
+		const baseTime = Date.now();
+		try {
+			for (let index = 0; index < prepared.length; index++) {
+				const item = prepared[index];
+				const sessionManager = SessionManager.create(ctx.cwd, this.childSessionDirectory);
+				const now = baseTime;
+				const record: AgentRecord = {
+					id: sessionManager.getSessionId(),
+					path: item.childPath,
+					parentPath: item.callerPath,
+					parentId: item.callerPath === ROOT_PATH ? this.root!.sessionId : this.agentsByPath.get(item.callerPath)!.id,
+					taskName: item.request.taskName,
+					nickname: this.reserveNickname(item.role.nicknameCandidates),
+					role: item.role.name,
+					modelProvider: item.selectedModel.provider,
+					modelId: item.selectedModel.id,
+					thinkingLevel: item.thinkingLevel,
+					status: "queued",
+					statusMessage: "waiting for an execution slot",
+					createdAt: now,
+					updatedAt: now,
+					lastUsedAt: now,
+					loaded: false,
+					holdsExecutionSlot: false,
+					launchGeneration: 0,
+					queuedMessage: formatTeamMessage({
+						type: "NEW_TASK",
+						taskName: item.request.taskName,
+						sender: item.callerPath,
+						payload: item.request.message,
+					}),
+				};
+				record.sessionFile = sessionManager.getSessionFile();
+				records.push(record);
+				if (!record.sessionFile) throw new Error(`failed to create persisted session for ${record.path}`);
+				sessionManager.appendCustomEntry(CHILD_META_ENTRY_TYPE, {
+					path: record.path,
+					parentPath: record.parentPath,
+					role: record.role,
+				});
+				sessionManager.appendCustomEntry(FORK_CONTEXT_ENTRY_TYPE, { messages: item.forkMessages });
+			}
+		} catch (error) {
+			for (const record of records) {
+				if (record.nickname) this.usedNicknames.delete(record.nickname);
+				if (record.sessionFile) {
+					try { fs.rmSync(record.sessionFile, { force: true }); } catch { /* best effort */ }
+				}
+			}
+			throw error;
+		}
+		for (const record of records) {
 			this.agentsByPath.set(record.path, record);
 			this.pathBySessionId.set(record.id, record.path);
-			this.subscribe(record);
-			this.persistState();
-			const initialMessage = formatTeamMessage({
-				type: "NEW_TASK",
-				taskName,
-				sender: callerPath,
-				payload: request.message,
-			});
-			this.launch(record, initialMessage);
-			return this.view(record);
-		} catch (error) {
-			if (slotReserved) this.activeExecutionSlots = Math.max(0, this.activeExecutionSlots - 1);
-			throw error;
-		} finally {
-			this.pendingPaths.delete(childPath);
-			this.changed();
 		}
+		this.persistState();
+		return records;
+	}
+
+	private async startQueued(record: AgentRecord): Promise<void> {
+		if (record.status !== "queued") return;
+		this.reserveExecutionSlot();
+		record.holdsExecutionSlot = true;
+		record.status = "pending_init";
+		record.statusMessage = "initializing";
+		record.updatedAt = Date.now();
+		this.persistState();
+		try {
+			await this.ensureLoaded(record);
+			if (this.shuttingDown || this.disposed) {
+				record.status = "queued";
+				record.statusMessage = "waiting for an execution slot";
+				this.releaseExecutionSlot(record);
+				this.unload(record);
+				return;
+			}
+			const content = [...(record.queuedMail ?? []), record.queuedMessage].filter((item): item is string => Boolean(item)).join("\n\n");
+			if ((record.queuedMail?.length ?? 0) > 0) this.mailboxPending.set(record.path, 0);
+			record.queuedMessage = undefined;
+			record.queuedMail = undefined;
+			this.launch(record, content);
+			this.persistState();
+		} catch (error) {
+			record.status = "errored";
+			record.statusMessage = error instanceof Error ? error.message : String(error);
+			record.finalAnswer = record.statusMessage;
+			record.queuedMessage = undefined;
+			record.queuedMail = undefined;
+			record.updatedAt = Date.now();
+			this.releaseExecutionSlot(record);
+			this.writeAgentResult(record);
+			this.persistState();
+			void this.deliver(record.path, record.parentPath, this.completionNotice(record), false, "AGENT_STATUS").catch(() => {});
+		}
+	}
+
+	private async runQueuedScheduler(): Promise<void> {
+		while (!this.disposed && !this.shuttingDown && this.activeExecutionSlots < this.maxConcurrentSubagents) {
+			const next = this.queuedRecords()[0];
+			if (!next) break;
+			await this.startQueued(next);
+		}
+	}
+
+	private async scheduleQueued(): Promise<void> {
+		if (this.disposed || this.shuttingDown) return;
+		if (this.schedulerPromise) return this.schedulerPromise;
+		const operation = this.runQueuedScheduler();
+		this.schedulerPromise = operation;
+		try {
+			await operation;
+		} finally {
+			if (this.schedulerPromise === operation) this.schedulerPromise = undefined;
+			if (!this.disposed && !this.shuttingDown && this.activeExecutionSlots < this.maxConcurrentSubagents && this.queuedRecords().length > 0) {
+				queueMicrotask(() => void this.scheduleQueued());
+			}
+		}
+	}
+
+	async spawnMany(ctx: ExtensionContext, requests: SpawnRequest[]): Promise<AgentView[]> {
+		return this.enqueueSpawnOperation(async () => {
+			const prepared = await this.prepareSpawnBatch(ctx, requests);
+			const records = this.materializeQueuedBatch(ctx, prepared);
+			await this.scheduleQueued();
+			return records.map((record) => this.view(record));
+		});
 	}
 
 	private async deliver(
@@ -822,17 +922,23 @@ export class AgentControl {
 		} else {
 			const record = this.agentsByPath.get(recipientPath);
 			if (!record) throw new Error(`agent ${recipientPath} not found`);
-			await this.ensureLoaded(record);
-			const wasIdle = record.session!.isIdle;
-			if (triggerTurn && wasIdle) {
-				this.launch(record, content);
+			if (!record.session && (record.status === "queued" || record.status === "pending_init")) {
+				record.queuedMail = [...(record.queuedMail ?? []), content];
+				record.updatedAt = Date.now();
+				this.persistState();
 			} else {
-				await record.session!.sendCustomMessage(
-					{ customType: EXTENSION_ID, content, display: true, details: { sender: senderPath, recipient: recipientPath, type } },
-					{ triggerTurn, deliverAs: "steer" },
-				);
+				await this.ensureLoaded(record);
+				const wasIdle = record.session!.isIdle;
+				if (triggerTurn && wasIdle) {
+					this.launch(record, content);
+				} else {
+					await record.session!.sendCustomMessage(
+						{ customType: EXTENSION_ID, content, display: true, details: { sender: senderPath, recipient: recipientPath, type } },
+						{ triggerTurn, deliverAs: "steer" },
+					);
+				}
+				record.lastUsedAt = Date.now();
 			}
-			record.lastUsedAt = Date.now();
 		}
 		this.notifyMailbox(recipientPath);
 	}
@@ -900,6 +1006,15 @@ export class AgentControl {
 		if (target.path === ROOT_PATH) throw new Error("root is not a spawned agent");
 		if (target.path === callerPath) throw new Error("an agent cannot interrupt itself");
 		const record = target.record!;
+		if (record.status === "queued") {
+			record.status = "interrupted";
+			record.statusMessage = "cancelled while waiting for an execution slot";
+			record.queuedMessage = undefined;
+			record.queuedMail = undefined;
+			record.updatedAt = Date.now();
+			this.persistState();
+			return this.view(record);
+		}
 		await this.ensureLoaded(record);
 		await record.session!.abort();
 		record.status = "interrupted";
@@ -907,6 +1022,7 @@ export class AgentControl {
 		record.updatedAt = Date.now();
 		this.releaseExecutionSlot(record);
 		this.persistState();
+		void this.scheduleQueued();
 		return this.view(record);
 	}
 
@@ -983,6 +1099,18 @@ export class AgentControl {
 		};
 	}
 
+	private queuedRecords(): AgentRecord[] {
+		return [...this.agentsByPath.values()]
+			.filter((record) => record.status === "queued")
+			.sort((left, right) => left.createdAt - right.createdAt);
+	}
+
+	private queuePosition(record: AgentRecord): number | undefined {
+		if (record.status !== "queued") return undefined;
+		const index = this.queuedRecords().findIndex((candidate) => candidate.path === record.path);
+		return index >= 0 ? index + 1 : undefined;
+	}
+
 	view(record: AgentRecord, includeResult = false): AgentView {
 		let storedAnswer = includeResult ? record.finalAnswer : undefined;
 		if (includeResult && !storedAnswer && record.resultFile) {
@@ -1001,6 +1129,7 @@ export class AgentControl {
 			loaded: record.loaded,
 			resultFile: includeResult ? record.resultFile : undefined,
 			finalAnswer: storedAnswer,
+			queuePosition: this.queuePosition(record),
 		};
 	}
 
@@ -1024,6 +1153,7 @@ export class AgentControl {
 		this.agentsByPath.clear();
 		this.pathBySessionId.clear();
 		this.pathBySessionId.set(ctx.sessionManager.getSessionId(), ROOT_PATH);
+		this.activeExecutionSlots = 0;
 		this.usedNicknames.clear();
 		let latest: PersistedTreeState | undefined;
 		for (const entry of ctx.sessionManager.getBranch()) {
@@ -1032,7 +1162,11 @@ export class AgentControl {
 		if (!latest || latest.rootSessionId !== ctx.sessionManager.getSessionId()) return;
 		let migratedAnyFile = false;
 		for (const persisted of latest.agents) {
-			const status = persisted.status === "running" || persisted.status === "pending_init" ? "interrupted" : persisted.status;
+			const status: AgentLifecycleStatus = persisted.status === "queued" || (persisted.status === "pending_init" && Boolean(persisted.queuedMessage))
+				? "queued"
+				: persisted.status === "running" || persisted.status === "pending_init"
+					? "interrupted"
+					: persisted.status;
 			const migratedSession = this.migrateStoredFile(persisted.sessionFile, this.childSessionDirectory);
 			const migratedResult = this.migrateStoredFile(persisted.resultFile, this.agentResultDirectory);
 			migratedAnyFile ||= migratedSession.migrated || migratedResult.migrated;
@@ -1041,7 +1175,11 @@ export class AgentControl {
 				sessionFile: migratedSession.path,
 				resultFile: migratedResult.path,
 				status,
-				statusMessage: status === "interrupted" && persisted.status === "running" ? "interrupted by previous session shutdown" : persisted.statusMessage,
+				statusMessage: status === "queued"
+					? "waiting for an execution slot"
+					: status === "interrupted" && persisted.status === "running"
+						? "interrupted by previous session shutdown"
+						: persisted.statusMessage,
 				loaded: false,
 				holdsExecutionSlot: false,
 				launchGeneration: 0,
@@ -1110,6 +1248,10 @@ export class AgentControl {
 	}
 
 	async shutdown(): Promise<void> {
+		this.shuttingDown = true;
+		if (this.schedulerPromise) {
+			try { await this.schedulerPromise; } catch { /* scheduler failures are recorded per agent */ }
+		}
 		for (const waiters of this.waiters.values()) {
 			for (const waiter of waiters) {
 				clearTimeout(waiter.timer);
@@ -1138,13 +1280,15 @@ export class AgentControl {
 		return rootAgentInstructions();
 	}
 
-	getCounts(): { running: number; loaded: number; total: number; slots: number } {
+	getCounts(): AgentCounts {
 		const records = [...this.agentsByPath.values()];
 		return {
-			running: records.filter((record) => record.status === "running").length,
+			running: records.filter((record) => record.status === "running" || record.status === "pending_init").length,
+			queued: records.filter((record) => record.status === "queued").length,
 			loaded: records.filter((record) => record.loaded).length,
 			total: records.length,
 			slots: this.maxConcurrentSubagents,
+			residentSlots: this.maxResidentSubagents,
 		};
 	}
 }

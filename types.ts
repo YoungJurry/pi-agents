@@ -8,7 +8,7 @@ export const CHILD_META_ENTRY_TYPE = "codex-agents-child-meta";
 export const FORK_CONTEXT_ENTRY_TYPE = "codex-agents-fork-context";
 export const ROOT_PATH = "/root";
 export const DIRECT_AGENT_TOOL_NAMES = [
-	"spawn_agent",
+	"spawn_agents",
 	"send_message",
 	"followup_task",
 	"wait_agent",
@@ -22,6 +22,7 @@ export const COLLABORATION_TOOL_NAMES = [
 
 export type CollaborationToolName = (typeof COLLABORATION_TOOL_NAMES)[number];
 export type AgentLifecycleStatus =
+	| "queued"
 	| "pending_init"
 	| "running"
 	| "interrupted"
@@ -48,6 +49,8 @@ export interface PersistedAgent {
 	createdAt: number;
 	updatedAt: number;
 	lastUsedAt: number;
+	queuedMessage?: string;
+	queuedMail?: string[];
 }
 
 export interface PersistedTreeState {
@@ -87,6 +90,16 @@ export interface AgentView {
 	loaded: boolean;
 	resultFile?: string;
 	finalAnswer?: string;
+	queuePosition?: number;
+}
+
+export interface AgentCounts {
+	running: number;
+	queued: number;
+	loaded: number;
+	total: number;
+	slots: number;
+	residentSlots: number;
 }
 
 export interface AgentTranscriptView {

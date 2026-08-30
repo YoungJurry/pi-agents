@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0 - 2026-08-31
+
+- Replace the single-task `spawn_agent` action with one non-redundant `spawn_agents` action whose `agents` array accepts either one or many tasks.
+- Start tasks up to the configured execution limit and persist overflow tasks in an explicit FIFO `queued` state.
+- Automatically start queued tasks as slots become available without blocking the parent tool call.
+- Report `queued` status, queue position, and running/queued capacity through `list_agents(view="status")`, action results, the live widget, and `/agents`.
+- Allow queued agents to receive persistent messages and be cancelled without loading an `AgentSession`.
+- Restore waiting work after main-session resume while interrupted running work remains interrupted.
+- Add `maxConcurrentSubagents` and `maxResidentSubagents` settings with validated positive-integer values.
+- Keep exactly five catalog actions and the same two provider-facing gateway schemas.
+
 ## 0.5.3 - 2026-08-31
 
 - Align transcript navigation with `/tree`: `↑`/`↓` move by line and `←`/`→` move by page.

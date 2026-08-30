@@ -2,8 +2,18 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
+export const DEFAULT_MAX_CONCURRENT_SUBAGENTS = 3;
+export const DEFAULT_MAX_RESIDENT_SUBAGENTS = 3;
+
 export interface AgentSettings {
 	defaultModel?: string;
+	maxConcurrentSubagents?: number;
+	maxResidentSubagents?: number;
+}
+
+export interface AgentLimits {
+	maxConcurrentSubagents: number;
+	maxResidentSubagents: number;
 }
 
 export function getAgentSettingsPath(): string {
@@ -32,10 +42,31 @@ export function loadAgentSettings(filePath = getAgentSettingsPath()): AgentSetti
 		throw new Error(`agent settings at ${filePath} must contain a JSON object`);
 	}
 
-	const defaultModel = (value as { defaultModel?: unknown }).defaultModel;
-	if (defaultModel === undefined) return {};
-	if (typeof defaultModel !== "string" || !defaultModel.trim()) {
-		throw new Error(`defaultModel in ${filePath} must be a non-empty provider/model string`);
+	const raw = value as Record<string, unknown>;
+	const settings: AgentSettings = {};
+	if (raw.defaultModel !== undefined) {
+		if (typeof raw.defaultModel !== "string" || !raw.defaultModel.trim()) {
+			throw new Error(`defaultModel in ${filePath} must be a non-empty provider/model string`);
+		}
+		settings.defaultModel = raw.defaultModel.trim();
 	}
-	return { defaultModel: defaultModel.trim() };
+	for (const key of ["maxConcurrentSubagents", "maxResidentSubagents"] as const) {
+		const limit = raw[key];
+		if (limit === undefined) continue;
+		if (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1) {
+			throw new Error(`${key} in ${filePath} must be a positive integer`);
+		}
+		settings[key] = limit;
+	}
+	return settings;
+}
+
+export function resolveAgentLimits(settings: AgentSettings, filePath = getAgentSettingsPath()): AgentLimits {
+	const maxConcurrentSubagents = settings.maxConcurrentSubagents ?? DEFAULT_MAX_CONCURRENT_SUBAGENTS;
+	const maxResidentSubagents = settings.maxResidentSubagents
+		?? Math.max(DEFAULT_MAX_RESIDENT_SUBAGENTS, maxConcurrentSubagents);
+	if (maxResidentSubagents < maxConcurrentSubagents) {
+		throw new Error(`maxResidentSubagents in ${filePath} must be greater than or equal to maxConcurrentSubagents`);
+	}
+	return { maxConcurrentSubagents, maxResidentSubagents };
 }

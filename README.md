@@ -61,7 +61,7 @@ Only two compact collaboration schemas remain active:
 
 `list_agents(view="tools")` returns these actions as ordinary tool-result content instead of activating more provider tool schemas:
 
-- `spawn_agent`: spawn a persistent child `AgentSession`
+- `spawn_agents`: submit one or many persistent child tasks in a single action; overflow waits in the visible FIFO queue
 - `send_message`: non-waking mailbox message
 - `followup_task`: assign more work and trigger processing
 - `wait_agent`: event-driven mailbox wait
@@ -71,20 +71,29 @@ Example dispatcher call:
 
 ```json
 {
-  "action": "spawn_agent",
+  "action": "spawn_agents",
   "arguments": {
-    "message": "Research the API implementation",
-    "task_name": "api_research",
-    "agent_type": "explorer"
+    "agents": [
+      {
+        "message": "Research the API implementation",
+        "task_name": "api_research",
+        "agent_type": "explorer"
+      },
+      {
+        "message": "Inspect the test strategy",
+        "task_name": "test_research",
+        "agent_type": "explorer"
+      }
+    ]
   }
 }
 ```
 
-The five action implementations stay registered locally, but their individual provider schemas are never added to later requests. Root and child agents use the same stable `list_agents` + `agent_action` surface. Agents use canonical paths such as `/root/api_research` and can recursively spawn children.
+The five action implementations stay registered locally, but their individual provider schemas are never added to later requests. `spawn_agents` replaces the old single-task action rather than adding a redundant sixth action; an array with one item performs a single spawn. Root and child agents use the same stable `list_agents` + `agent_action` surface. Agents use canonical paths such as `/root/api_research` and can recursively spawn children.
 
 ## Context inheritance
 
-The `spawn_agent` action's `fork_turns` argument accepts:
+Each item in the `spawn_agents` action accepts a `fork_turns` argument:
 
 - `none`: fresh context
 - `all`: sanitized semantic parent context (default)
@@ -124,23 +133,29 @@ Global sub-agent settings live outside the installed package so updates cannot o
 
 ```json
 {
-  "defaultModel": "opencode-go/ox-alpha-free"
+  "defaultModel": "opencode-go/ox-alpha-free",
+  "maxConcurrentSubagents": 3,
+  "maxResidentSubagents": 3
 }
 ```
 
 Model selection uses this precedence:
 
-1. The `spawn_agent` action's `model` argument
+1. The `spawn_agents` item's `model` argument
 2. The selected role's `model` frontmatter
 3. `agents-setting.json`'s `defaultModel`
 4. The parent agent's active model
 
-The settings file is optional. Invalid JSON, an empty `defaultModel`, or an unavailable configured model produces an explicit error. `fork_turns` controls inherited messages independently of model selection.
+The settings file is optional. Limits must be positive integers, and `maxResidentSubagents` cannot be smaller than `maxConcurrentSubagents`. If concurrency is configured while residency is omitted, residency automatically expands to at least the concurrency limit. Limit changes take effect after `/reload`. Invalid JSON, an empty `defaultModel`, or an unavailable configured model produces an explicit error. `fork_turns` controls inherited messages independently of model selection.
 
 ## Lifecycle
 
-- Default child execution slots: 3 (4 active agents including root)
-- Default resident child sessions: 3
+- Default child execution slots: 3 (4 active agents including root), configurable with `maxConcurrentSubagents`
+- Default resident child sessions: 3, configurable with `maxResidentSubagents`
+- `spawn_agents` starts tasks until all execution slots are occupied and records the remainder as `queued`
+- Queued tasks are lightweight, persistent, FIFO ordered, and do not occupy resident-session capacity
+- `list_agents(view="status")` reports each waiting task's queue position plus current running/queued capacity
+- The live widget shows `Agents active: <running>/<limit> · queued: <waiting>` and labels waiting paths explicitly
 - Completed/interrupted sessions are unloaded by LRU when residency is full
 - Child sessions persist under `~/.pi/agent/codex-agents/roots/<root-session-id>/sessions/` and reload lazily
 - Full final answers persist under `~/.pi/agent/codex-agents/roots/<root-session-id>/results/`

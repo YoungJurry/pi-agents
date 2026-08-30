@@ -23,6 +23,7 @@ type ChangeSubscriber = (listener: () => void) => () => void;
 
 function statusIcon(status: AgentView["status"]): string {
 	switch (status) {
+		case "queued": return "◷";
 		case "running": return "●";
 		case "completed": return "✓";
 		case "errored": return "✗";
@@ -34,6 +35,7 @@ function statusIcon(status: AgentView["status"]): string {
 
 function statusColor(status: AgentView["status"]): "success" | "error" | "warning" | "muted" | "dim" {
 	switch (status) {
+		case "queued": return "dim";
 		case "running": return "warning";
 		case "completed": return "success";
 		case "errored": return "error";
@@ -59,9 +61,11 @@ function itemLine(agent: AgentView, theme: Theme, width: number): string {
 	const branch = `${"  ".repeat(depth)}${depth > 0 ? "└─ " : ""}`;
 	const icon = theme.fg(statusColor(agent.status), statusIcon(agent.status));
 	const nickname = agent.nickname ? theme.fg("muted", ` (${agent.nickname})`) : "";
-	const residency = agent.loaded ? "" : theme.fg("dim", " [unloaded]");
+	const residency = agent.status === "queued"
+		? theme.fg("warning", ` [waiting #${agent.queuePosition ?? "?"}]`)
+		: agent.loaded ? "" : theme.fg("dim", " [unloaded]");
 	const left = `${branch}${icon} ${theme.fg("accent", name)}${nickname}${residency}`;
-	const right = theme.fg("dim", agent.status);
+	const right = theme.fg("dim", agent.status === "queued" ? `queued #${agent.queuePosition ?? "?"}` : agent.status);
 	const available = Math.max(1, width - visibleWidth(right) - 2);
 	const clipped = truncateToWidth(left, available, "…");
 	return `${clipped}${" ".repeat(Math.max(1, width - visibleWidth(clipped) - visibleWidth(right)))}${right}`;
@@ -369,7 +373,7 @@ export class AgentTranscriptViewer {
 			? `${statusIcon(agent.status)} ${agent.path}${agent.nickname ? ` (${agent.nickname})` : ""}`
 			: "Sub-agent transcript";
 		const metadata = agent
-			? `${agent.status} · ${agent.model}${agent.role ? ` · ${agent.role}` : ""} · ${snapshot.messages.length} messages`
+			? `${agent.status}${agent.status === "queued" ? ` #${agent.queuePosition ?? "?"} (waiting for execution slot)` : ""} · ${agent.model}${agent.role ? ` · ${agent.role}` : ""} · ${snapshot.messages.length} messages`
 			: "unavailable";
 		const scroll = bodyLines.length > bodyHeight
 			? ` · lines ${this.scrollOffset + 1}-${Math.min(bodyLines.length, this.scrollOffset + bodyHeight)}/${bodyLines.length}`
