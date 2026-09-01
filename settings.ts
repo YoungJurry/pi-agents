@@ -1,12 +1,21 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import {
+	clampThinkingLevel,
+	getSupportedThinkingLevels,
+	type Model,
+} from "@earendil-works/pi-ai";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 export const DEFAULT_MAX_CONCURRENT_SUBAGENTS = 3;
 export const DEFAULT_MAX_RESIDENT_SUBAGENTS = 3;
+export const DEFAULT_CHILD_THINKING_LEVEL: ThinkingLevel = "medium";
+export const CHILD_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 export interface AgentSettings {
 	defaultModel?: string;
+	defaultThinkingLevel?: ThinkingLevel;
 	maxConcurrentSubagents?: number;
 	maxResidentSubagents?: number;
 }
@@ -26,6 +35,21 @@ export function selectAgentModel(...candidates: Array<string | undefined>): stri
 		if (model) return model;
 	}
 	return undefined;
+}
+
+export function selectAgentThinkingLevel(
+	model: Model<any>,
+	explicitModel: string | undefined,
+	explicitThinking: ThinkingLevel | undefined,
+	roleThinking: ThinkingLevel | undefined,
+	globalThinking: ThinkingLevel | undefined,
+): ThinkingLevel {
+	if (explicitThinking !== undefined) return clampThinkingLevel(model, explicitThinking) as ThinkingLevel;
+	if (explicitModel?.trim()) {
+		const levels = getSupportedThinkingLevels(model);
+		return (levels.at(-1) ?? "off") as ThinkingLevel;
+	}
+	return clampThinkingLevel(model, roleThinking ?? globalThinking ?? DEFAULT_CHILD_THINKING_LEVEL) as ThinkingLevel;
 }
 
 export function loadAgentSettings(filePath = getAgentSettingsPath()): AgentSettings {
@@ -49,6 +73,12 @@ export function loadAgentSettings(filePath = getAgentSettingsPath()): AgentSetti
 			throw new Error(`defaultModel in ${filePath} must be a non-empty provider/model string`);
 		}
 		settings.defaultModel = raw.defaultModel.trim();
+	}
+	if (raw.defaultThinkingLevel !== undefined) {
+		if (typeof raw.defaultThinkingLevel !== "string" || !CHILD_THINKING_LEVELS.includes(raw.defaultThinkingLevel as ThinkingLevel)) {
+			throw new Error(`defaultThinkingLevel in ${filePath} must be one of: ${CHILD_THINKING_LEVELS.join(", ")}`);
+		}
+		settings.defaultThinkingLevel = raw.defaultThinkingLevel as ThinkingLevel;
 	}
 	for (const key of ["maxConcurrentSubagents", "maxResidentSubagents"] as const) {
 		const limit = raw[key];

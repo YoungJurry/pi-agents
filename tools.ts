@@ -15,13 +15,16 @@ import type {
 	CollaborationToolName,
 } from "./types.ts";
 
-const ThinkingLevelSchema = StringEnum(["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const);
+const ThinkingLevelSchema = StringEnum(
+	["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
+	{ description: "Optional thinking override; otherwise Role then global defaults apply unless model is explicitly set" },
+);
 const AgentListViewSchema = StringEnum(["roles", "tools", "status", "results"] as const);
 const SpawnAgentItemSchema = Type.Object({
 	message: Type.String({ description: "Task to assign to the child agent" }),
 	task_name: Type.String({ description: "Unique lowercase name using letters, digits, and underscores" }),
 	agent_type: Type.Optional(Type.String({ description: "Optional role name returned by list_agents(view=\"roles\"); omit for general-purpose work" })),
-	model: Type.Optional(Type.String({ description: "Optional provider/model override" })),
+	model: Type.Optional(Type.String({ description: "Optional provider/model override; when set without reasoning_effort, the model's highest supported thinking level is used" })),
 	reasoning_effort: Type.Optional(ThinkingLevelSchema),
 	fork_turns: Type.Optional(Type.String({ description: "none, all, or a positive integer string; defaults to all" })),
 });
@@ -38,7 +41,7 @@ function compactStatus(agent: AgentView): string {
 	const residency = agent.loaded ? "loaded" : "unloaded";
 	const nickname = agent.nickname ? ` (${agent.nickname})` : "";
 	const waiting = agent.status === "queued" ? `, waiting at queue position ${agent.queuePosition ?? "?"}` : "";
-	return `${agent.path}${nickname}: ${agent.status}${waiting}, ${residency}`;
+	return `${agent.path}${nickname}: ${agent.status}${waiting}, ${agent.model}, thinking ${agent.thinkingLevel ?? "unknown"}, ${residency}`;
 }
 
 function catalogParameters(entry: AgentToolCatalogEntry): string {
@@ -123,6 +126,8 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 						path: agent.path,
 						nickname: agent.nickname,
 						status: agent.status,
+						model: agent.model,
+						thinking_level: agent.thinkingLevel,
 						queue_position: agent.queuePosition,
 					})),
 					capacity,

@@ -27,6 +27,7 @@ test("status view explicitly reports waiting agents and queue capacity", async (
 		path: "/root/waiting",
 		parentPath: "/root",
 		model: "test/model",
+		thinkingLevel: "high" as const,
 		status: "queued" as const,
 		statusMessage: "waiting for an execution slot",
 		loaded: false,
@@ -43,6 +44,7 @@ test("status view explicitly reports waiting agents and queue capacity", async (
 	const text = output.content.find((item) => item.type === "text")?.text ?? "";
 	assert.match(text, /\"status\":\"queued\"/);
 	assert.match(text, /\"queuePosition\":1/);
+	assert.match(text, /\"thinkingLevel\":\"high\"/);
 	assert.match(text, /\"queued\":1/);
 	assert.equal((output.details as any)?.targets[0]?.statusMessage, "waiting for an execution slot");
 });

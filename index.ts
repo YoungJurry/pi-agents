@@ -47,8 +47,10 @@ function treeLine(agent: AgentView, theme: Theme): string {
 		? theme.fg("warning", ` [waiting #${agent.queuePosition ?? "?"}]`)
 		: agent.path === ROOT_PATH || agent.loaded ? "" : theme.fg("dim", " [unloaded]");
 	const nickname = agent.nickname ? theme.fg("muted", ` (${agent.nickname})`) : "";
-	const model = agent.path === ROOT_PATH ? "" : theme.fg("dim", ` · ${agent.model}`);
-	return `${indent}${branch}${icon} ${theme.fg("accent", name)}${nickname}${residency}${model}`;
+	const runtime = agent.path === ROOT_PATH
+		? ""
+		: theme.fg("dim", ` · thinking ${agent.thinkingLevel ?? "unknown"} · ${agent.model}`);
+	return `${indent}${branch}${icon} ${theme.fg("accent", name)}${nickname}${residency}${runtime}`;
 }
 
 class AgentTreeWidget {
@@ -214,7 +216,7 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 				.map((agent) => ({
 					value: agent.path,
 					label: agent.path,
-					description: `${agent.status} · ${agent.model}`,
+					description: `${agent.status} · ${agent.model} · thinking ${agent.thinkingLevel ?? "unknown"}`,
 				}));
 			return matches.length > 0 ? matches : null;
 		},
@@ -225,68 +227,73 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 				if (requestedPath) {
 					try {
 						const transcript = control.transcript(ctx, requestedPath);
-						ctx.ui.notify(`${transcript.agent.path}: ${transcript.agent.status} · ${transcript.messages.length} messages\n${transcript.sessionFile}`, "info");
+						ctx.ui.notify(`${transcript.agent.path}: ${transcript.agent.status} · ${transcript.agent.model} · thinking ${transcript.agent.thinkingLevel ?? "unknown"} · ${transcript.messages.length} messages\n${transcript.sessionFile}`, "info");
 					} catch (error) {
 						ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 					}
 					return;
 				}
 				const agents = control.list(ctx).filter((agent) => agent.path !== ROOT_PATH);
-				ctx.ui.notify(agents.length > 0 ? agents.map((agent) => `${agent.path}: ${agent.status}`).join("\n") : "No sub-agents in this root session", "info");
+				ctx.ui.notify(agents.length > 0 ? agents.map((agent) => `${agent.path}: ${agent.status} · ${agent.model} · thinking ${agent.thinkingLevel ?? "unknown"}`).join("\n") : "No sub-agents in this root session", "info");
 				return;
 			}
 
-			let targetPath = requestedPath || undefined;
-			while (true) {
-				if (!targetPath) {
-					targetPath = await ctx.ui.custom<string | undefined>(
-						(tui, theme, keybindings, done) => new AgentPickerComponent(
+			const releaseUserOverlay = control.beginUserOverlay();
+			try {
+				let targetPath = requestedPath || undefined;
+				while (true) {
+					if (!targetPath) {
+						targetPath = await ctx.ui.custom<string | undefined>(
+							(tui, theme, keybindings, done) => new AgentPickerComponent(
+								tui,
+								theme,
+								keybindings,
+								() => control.list(ctx),
+								(listener) => control.onChange(listener),
+								done,
+							),
+							{
+								overlay: true,
+								overlayOptions: { anchor: "center", width: "68%", maxHeight: "82%", margin: 1 },
+							},
+						);
+						if (!targetPath) return;
+					}
+
+					try {
+						await control.prepareTranscriptToolDefinitions(ctx);
+					} catch (error) {
+						ctx.ui.notify(`Some custom tool renderers could not be loaded: ${error instanceof Error ? error.message : String(error)}`, "warning");
+					}
+
+					try {
+						control.transcript(ctx, targetPath);
+					} catch (error) {
+						ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+						if (requestedPath) return;
+						targetPath = undefined;
+						continue;
+					}
+
+					const selectedPath = targetPath;
+					await ctx.ui.custom<void>(
+						(tui, theme, keybindings, done) => new AgentTranscriptViewer(
 							tui,
 							theme,
 							keybindings,
-							() => control.list(ctx),
+							() => control.transcript(ctx, selectedPath),
 							(listener) => control.onChange(listener),
 							done,
 						),
 						{
 							overlay: true,
-							overlayOptions: { anchor: "center", width: "68%", maxHeight: "82%", margin: 1 },
+							overlayOptions: { anchor: "center", width: "92%", maxHeight: "92%", margin: 1 },
 						},
 					);
-					if (!targetPath) return;
-				}
-
-				try {
-					await control.prepareTranscriptToolDefinitions(ctx);
-				} catch (error) {
-					ctx.ui.notify(`Some custom tool renderers could not be loaded: ${error instanceof Error ? error.message : String(error)}`, "warning");
-				}
-
-				try {
-					control.transcript(ctx, targetPath);
-				} catch (error) {
-					ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
-					if (requestedPath) return;
 					targetPath = undefined;
-					continue;
 				}
-
-				const selectedPath = targetPath;
-				await ctx.ui.custom<void>(
-					(tui, theme, keybindings, done) => new AgentTranscriptViewer(
-						tui,
-						theme,
-						keybindings,
-						() => control.transcript(ctx, selectedPath),
-						(listener) => control.onChange(listener),
-						done,
-					),
-					{
-						overlay: true,
-						overlayOptions: { anchor: "center", width: "92%", maxHeight: "92%", margin: 1 },
-					},
-				);
-				targetPath = undefined;
+			} finally {
+				releaseUserOverlay();
 			}
 		},
 	});

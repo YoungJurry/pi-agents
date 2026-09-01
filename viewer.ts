@@ -64,8 +64,10 @@ function itemLine(agent: AgentView, theme: Theme, width: number): string {
 	const residency = agent.status === "queued"
 		? theme.fg("warning", ` [waiting #${agent.queuePosition ?? "?"}]`)
 		: agent.loaded ? "" : theme.fg("dim", " [unloaded]");
-	const left = `${branch}${icon} ${theme.fg("accent", name)}${nickname}${residency}`;
-	const right = theme.fg("dim", agent.status === "queued" ? `queued #${agent.queuePosition ?? "?"}` : agent.status);
+	const runtime = theme.fg("dim", ` · ${agent.model}`);
+	const left = `${branch}${icon} ${theme.fg("accent", name)}${nickname}${residency}${runtime}`;
+	const status = agent.status === "queued" ? `queued #${agent.queuePosition ?? "?"}` : agent.status;
+	const right = theme.fg("dim", `thinking ${agent.thinkingLevel ?? "unknown"} · ${status}`);
 	const available = Math.max(1, width - visibleWidth(right) - 2);
 	const clipped = truncateToWidth(left, available, "…");
 	return `${clipped}${" ".repeat(Math.max(1, width - visibleWidth(clipped) - visibleWidth(right)))}${right}`;
@@ -373,7 +375,7 @@ export class AgentTranscriptViewer {
 			? `${statusIcon(agent.status)} ${agent.path}${agent.nickname ? ` (${agent.nickname})` : ""}`
 			: "Sub-agent transcript";
 		const metadata = agent
-			? `${agent.status}${agent.status === "queued" ? ` #${agent.queuePosition ?? "?"} (waiting for execution slot)` : ""} · ${agent.model}${agent.role ? ` · ${agent.role}` : ""} · ${snapshot.messages.length} messages`
+			? `${agent.status}${agent.status === "queued" ? ` #${agent.queuePosition ?? "?"} (waiting for execution slot)` : ""} · thinking ${agent.thinkingLevel ?? "unknown"} · ${agent.model}${agent.role ? ` · ${agent.role}` : ""} · ${snapshot.messages.length} messages`
 			: "unavailable";
 		const scroll = bodyLines.length > bodyHeight
 			? ` · lines ${this.scrollOffset + 1}-${Math.min(bodyLines.length, this.scrollOffset + bodyHeight)}/${bodyLines.length}`

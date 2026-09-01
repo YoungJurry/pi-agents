@@ -1,6 +1,6 @@
 {
   "name": "pi-codex-agents",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Persistent in-process Codex-style multi-agent collaboration for Pi",
   "author": "smithyyang",
   "type": "module",

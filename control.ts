@@ -25,10 +25,12 @@ import {
 } from "./context.ts";
 import { discoverRoles, resolveRole } from "./roles.ts";
 import {
+	DEFAULT_CHILD_THINKING_LEVEL,
 	DEFAULT_MAX_CONCURRENT_SUBAGENTS,
 	DEFAULT_MAX_RESIDENT_SUBAGENTS,
 	loadAgentSettings,
 	selectAgentModel,
+	selectAgentThinkingLevel,
 } from "./settings.ts";
 import {
 	AGENT_GATEWAY_TOOL_NAMES,
@@ -164,6 +166,8 @@ export class AgentControl {
 	private disposed = false;
 	private shuttingDown = false;
 	private uiDialogTail: Promise<void> = Promise.resolve();
+	private userOverlayDepth = 0;
+	private readonly userOverlayWaiters = new Set<() => void>();
 	private readonly rootStorageDirectory = path.join(getAgentDir(), "codex-agents", "roots");
 	private childSessionDirectory = path.join(getAgentDir(), "codex-agents", "sessions");
 	private agentResultDirectory = path.join(getAgentDir(), "codex-agents", "results");
@@ -195,6 +199,24 @@ export class AgentControl {
 		return result;
 	}
 
+	beginUserOverlay(): () => void {
+		this.userOverlayDepth++;
+		let released = false;
+		return () => {
+			if (released) return;
+			released = true;
+			this.userOverlayDepth = Math.max(0, this.userOverlayDepth - 1);
+			if (this.userOverlayDepth > 0) return;
+			for (const resolve of this.userOverlayWaiters) resolve();
+			this.userOverlayWaiters.clear();
+		};
+	}
+
+	private waitForUserOverlayClose(): Promise<void> {
+		if (this.userOverlayDepth === 0) return Promise.resolve();
+		return new Promise((resolve) => this.userOverlayWaiters.add(resolve));
+	}
+
 	private enqueueSpawnOperation<T>(operation: () => Promise<T>): Promise<T> {
 		const result = this.spawnOperationTail.then(operation, operation);
 		this.spawnOperationTail = result.then(() => undefined, () => undefined);
@@ -221,13 +243,17 @@ export class AgentControl {
 				if (typeof value !== "function") return value;
 				if (dialogMethods.has(property)) {
 					return (...args: unknown[]) => this.enqueueUiDialog(async () => {
+						await this.waitForUserOverlayClose();
 						const taggedArgs = [...args];
 						if (typeof taggedArgs[0] === "string") taggedArgs[0] = `[${record.path}] ${taggedArgs[0]}`;
 						return value.apply(target, taggedArgs);
 					});
 				}
 				if (property === "custom") {
-					return (...args: unknown[]) => this.enqueueUiDialog(() => value.apply(target, args));
+					return (...args: unknown[]) => this.enqueueUiDialog(async () => {
+						await this.waitForUserOverlayClose();
+						return value.apply(target, args);
+					});
 				}
 				if (property === "notify") {
 					return (message: string, ...args: unknown[]) => value.apply(target, [`[${record.path}] ${message}`, ...args]);
@@ -519,8 +545,7 @@ export class AgentControl {
 	private async resolveModel(ctx: ExtensionContext, requested?: string): Promise<Model<any>> {
 		const value = requested?.trim();
 		if (!value) {
-			if (ctx.model) return ctx.model;
-			throw new Error("no sub-agent model configured and the parent agent has no active model");
+			throw new Error("no sub-agent model configured; set a task model, Role model, or defaultModel in agents-setting.json");
 		}
 		const runtime = await this.getModelRuntime(ctx);
 		const slash = value.indexOf("/");
@@ -761,7 +786,13 @@ export class AgentControl {
 				callerPath,
 				role,
 				selectedModel,
-				thinkingLevel: request.thinkingLevel || role.thinkingLevel || ctx.thinkingLevel,
+				thinkingLevel: selectAgentThinkingLevel(
+					selectedModel,
+					request.model,
+					request.thinkingLevel,
+					role.thinkingLevel,
+					settings.defaultThinkingLevel,
+				),
 				forkMessages: sanitizeForkMessages(callerMessages, parseForkMode(request.forkTurns)),
 			});
 		}
@@ -1075,12 +1106,11 @@ export class AgentControl {
 	listRoles(ctx: ExtensionContext): AgentRoleView[] {
 		this.callerPath(ctx);
 		const settings = loadAgentSettings();
-		const inheritedModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 		return discoverRoles(ctx.cwd, ctx.isProjectTrusted()).map((role) => ({
 			name: role.name,
 			description: role.description,
-			model: role.model || settings.defaultModel || inheritedModel,
-			thinkingLevel: role.thinkingLevel,
+			model: role.model || settings.defaultModel,
+			thinkingLevel: role.thinkingLevel ?? settings.defaultThinkingLevel ?? DEFAULT_CHILD_THINKING_LEVEL,
 			tools: role.tools,
 			source: role.source,
 		}));

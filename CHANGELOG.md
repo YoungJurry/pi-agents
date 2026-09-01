@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 - 2026-09-01
+
+- Add validated global `defaultThinkingLevel` configuration with an internal `medium` default.
+- Remove implicit inheritance from the parent Agent's active model and thinking level.
+- Apply task overrides before Role settings and global settings; an explicit model without `reasoning_effort` now selects that model's highest supported level.
+- Clamp requested and configured levels through Pi's model-specific thinking capabilities and persist the effective value.
+- Show effective thinking level alongside the model in the live tree, `/agents` picker/transcript, completion rendering, status output, and non-TUI inspection.
+- Defer forwarded child permission and custom dialogs while `/agents` is open, preserving inspector keyboard focus and showing queued dialogs only after the inspector exits.
+
 ## 0.6.0 - 2026-08-31
 
 - Replace the single-task `spawn_agent` action with one non-redundant `spawn_agents` action whose `agents` array accepts either one or many tasks.

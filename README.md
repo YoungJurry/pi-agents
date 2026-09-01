@@ -34,7 +34,7 @@ Use the user-only `/agents` command to browse the current root session's sub-age
 /agents /root/api_research
 ```
 
-The picker shows lifecycle status, model, role, nickname, and residency. Selecting an agent opens its active session branch with normal Pi-style assistant messages, thinking, tool calls, tool results, and collaboration messages. Custom tools reuse their original Pi renderers, so tools such as `web_search` and `fetch` stay as compact as they are in the main transcript. Running sessions refresh while the viewer is open.
+The picker shows lifecycle status, model, effective thinking level, role, nickname, and residency. Selecting an agent opens its active session branch with normal Pi-style assistant messages, thinking, tool calls, tool results, and collaboration messages. Custom tools reuse their original Pi renderers, so tools such as `web_search` and `fetch` stay as compact as they are in the main transcript. Running sessions refresh while the viewer is open. Child permission dialogs wait behind the inspector and appear only after the user fully exits `/agents`, so they cannot steal focus from or hide behind its overlay.
 
 Viewer controls:
 
@@ -134,19 +134,24 @@ Global sub-agent settings live outside the installed package so updates cannot o
 ```json
 {
   "defaultModel": "opencode-go/ox-alpha-free",
+  "defaultThinkingLevel": "medium",
   "maxConcurrentSubagents": 3,
   "maxResidentSubagents": 3
 }
 ```
 
-Model selection uses this precedence:
+Model and thinking configuration uses task fields first, then Role frontmatter, then global settings. Parent Agent model and thinking state are never used as implicit fallbacks.
 
-1. The `spawn_agents` item's `model` argument
-2. The selected role's `model` frontmatter
-3. `agents-setting.json`'s `defaultModel`
-4. The parent agent's active model
+| Task override | Effective selection |
+|---|---|
+| `model` and `reasoning_effort` | Use both explicit values |
+| `model` only | Use that model and its highest supported thinking level |
+| `reasoning_effort` only | Use the Role/global model with the explicit thinking level |
+| neither | Use Role values where present, then `defaultModel` and `defaultThinkingLevel` |
 
-The settings file is optional. Limits must be positive integers, and `maxResidentSubagents` cannot be smaller than `maxConcurrentSubagents`. If concurrency is configured while residency is omitted, residency automatically expands to at least the concurrency limit. Limit changes take effect after `/reload`. Invalid JSON, an empty `defaultModel`, or an unavailable configured model produces an explicit error. `fork_turns` controls inherited messages independently of model selection.
+Unsupported thinking values are clamped through Pi's model-specific `thinkingLevelMap`, and the effective level is persisted and displayed. If `defaultThinkingLevel` is omitted, the plugin-level default is `medium`. Supported configured values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
+
+The settings file is optional, but spawning requires a model from either the task, selected Role, or `defaultModel`; it no longer inherits the parent model. Limits must be positive integers, and `maxResidentSubagents` cannot be smaller than `maxConcurrentSubagents`. If concurrency is configured while residency is omitted, residency automatically expands to at least the concurrency limit. Setting changes take effect after `/reload`. Invalid JSON, an invalid `defaultThinkingLevel`, an empty `defaultModel`, or an unavailable configured model produces an explicit error. `fork_turns` controls inherited messages independently of model and thinking selection.
 
 ## Lifecycle
 
@@ -170,7 +175,8 @@ The settings file is optional. Limits must be positive integers, and `maxResiden
 - Child sessions are kept out of Pi's normal `/resume` picker
 - Agent-tree metadata persists in root session custom entries
 - Child extension approval dialogs are serialized and forwarded to the root TUI with the agent path
+- While `/agents` is open, forwarded permission/custom dialogs wait without taking keyboard focus and appear only after the inspector closes
 - In non-interactive modes, permission extensions such as `permission-gate.ts` fail closed
 - All agents share the same cwd and filesystem
 
-Use `/agents` to browse the tree and inspect read-only child transcripts. A compact live tree appears below the editor while child agents exist and shows each active agent's `provider/model` identifier.
+Use `/agents` to browse the tree and inspect read-only child transcripts. A compact live tree appears below the editor while child agents exist and shows each active agent's `provider/model` identifier and effective thinking level.
