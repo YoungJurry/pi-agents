@@ -1,8 +1,8 @@
 {
-  "name": "pi-codex-agents",
+  "name": "@youngjurry/pi-agents",
   "version": "0.7.1",
   "description": "Persistent in-process Codex-style multi-agent collaboration for Pi",
-  "author": "smithyyang",
+  "author": "youngjurry",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -19,6 +19,11 @@
   "homepage": "https://github.com/YoungJurry/pi-agents#readme",
   "bugs": {
     "url": "https://github.com/YoungJurry/pi-agents/issues"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "test": "tsx --test test/*.test.ts",
+    "prepublishOnly": "npm run check && npm test"
   },
   "files": [
     "*.ts",
@@ -45,5 +50,18 @@
     "@earendil-works/pi-coding-agent": { "optional": true },
     "@earendil-works/pi-tui": { "optional": true },
     "typebox": { "optional": true }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^0.84.4",
+    "@earendil-works/pi-agent-core": "^0.84.4",
+    "@earendil-works/pi-coding-agent": "^0.84.4",
+    "@earendil-works/pi-tui": "^0.84.4",
+    "@types/node": "^26.4.0",
+    "tsx": "^4.23.13",
+    "typebox": "^1.3.7",
+    "typescript": "^7.0.2"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

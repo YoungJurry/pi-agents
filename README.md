@@ -4,11 +4,19 @@ In-process persistent multi-agent collaboration modeled after OpenAI Codex Multi
 
 ## Install
 
+Install the public npm package:
+
+```bash
+pi install npm:@youngjurry/pi-agents
+```
+
+Or install directly from GitHub:
+
 ```bash
 pi install git:github.com/YoungJurry/pi-agents
 ```
 
-Then start Pi or run `/reload` in an existing session.
+Choose only one source to avoid loading the extension twice. Then start Pi or run `/reload` in an existing session.
 
 > This extension runs child agents with the same OS user and filesystem permissions as the root Pi process. Review [SECURITY.md](./SECURITY.md) before using it on untrusted work.
 

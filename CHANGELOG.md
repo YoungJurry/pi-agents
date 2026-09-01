@@ -6,6 +6,7 @@
 - Persist `lastAssignedAt` separately from noisy session activity timestamps.
 - Move reused agents to the top after a successful `followup_task` without reshuffling on streaming, tools, completion, loading, or read-only inspection.
 - Preserve canonical path ordering in `list_agents(view="status")` and FIFO ordering in the execution queue.
+- Add public npm package metadata, reproducible development dependencies, and prepublish checks for `@youngjurry/pi-agents`.
 
 ## 0.7.0 - 2026-09-01
 
