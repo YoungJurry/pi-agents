@@ -49,6 +49,7 @@ export interface PersistedAgent {
 	createdAt: number;
 	updatedAt: number;
 	lastUsedAt: number;
+	lastAssignedAt?: number;
 	queuedMessage?: string;
 	queuedMail?: string[];
 }
@@ -91,6 +92,7 @@ export interface AgentView {
 	resultFile?: string;
 	finalAnswer?: string;
 	queuePosition?: number;
+	lastAssignedAt?: number;
 }
 
 export interface AgentCounts {

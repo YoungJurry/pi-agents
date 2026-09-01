@@ -131,6 +131,7 @@ function clonePersisted(record: AgentRecord): PersistedAgent {
 		createdAt: record.createdAt,
 		updatedAt: record.updatedAt,
 		lastUsedAt: record.lastUsedAt,
+		lastAssignedAt: record.lastAssignedAt,
 		queuedMessage: record.queuedMessage,
 		queuedMail: record.queuedMail,
 	};
@@ -823,6 +824,7 @@ export class AgentControl {
 					createdAt: now,
 					updatedAt: now,
 					lastUsedAt: now,
+					lastAssignedAt: now,
 					loaded: false,
 					holdsExecutionSlot: false,
 					launchGeneration: 0,
@@ -982,6 +984,11 @@ export class AgentControl {
 			throw new Error("follow-up tasks cannot target the root agent");
 		}
 		await this.deliver(callerPath, target.path, request.message, request.triggerTurn);
+		if (request.triggerTurn && target.record) {
+			target.record.lastAssignedAt = Date.now();
+			target.record.updatedAt = target.record.lastAssignedAt;
+			this.persistState();
+		}
 		return target.path === ROOT_PATH ? this.rootView() : this.view(target.record!);
 	}
 
@@ -1160,6 +1167,7 @@ export class AgentControl {
 			resultFile: includeResult ? record.resultFile : undefined,
 			finalAnswer: storedAnswer,
 			queuePosition: this.queuePosition(record),
+			lastAssignedAt: record.lastAssignedAt ?? record.createdAt,
 		};
 	}
 

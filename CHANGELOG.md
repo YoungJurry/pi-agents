@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1 - 2026-09-01
+
+- Order the `/agents` picker by latest task assignment, newest first, instead of alphabetically.
+- Persist `lastAssignedAt` separately from noisy session activity timestamps.
+- Move reused agents to the top after a successful `followup_task` without reshuffling on streaming, tools, completion, loading, or read-only inspection.
+- Preserve canonical path ordering in `list_agents(view="status")` and FIFO ordering in the execution queue.
+
 ## 0.7.0 - 2026-09-01
 
 - Add validated global `defaultThinkingLevel` configuration with an internal `medium` default.

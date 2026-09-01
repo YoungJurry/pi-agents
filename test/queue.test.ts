@@ -69,6 +69,17 @@ test("queued agents start only when execution slots are available", async () => 
 	assert.deepEqual(launched.map((item) => item.split(":")[0]), ["/root/task_1", "/root/task_2", "/root/task_3"]);
 });
 
+test("follow-up task refreshes assignment recency for reused agents", async () => {
+	const { control, ctx } = createControl(1);
+	const record = { ...queuedRecord(1), status: "completed", queuedMessage: undefined, lastAssignedAt: 1 };
+	(control as any).agentsByPath.set(record.path, record);
+	(control as any).pathBySessionId.set(record.id, record.path);
+	(control as any).deliver = async () => undefined;
+	const view = await control.message(ctx, { target: record.path, message: "Reuse this agent", triggerTurn: true });
+	assert.ok((view.lastAssignedAt ?? 0) > 1);
+	assert.equal(record.lastAssignedAt, view.lastAssignedAt);
+});
+
 test("interrupting a queued agent cancels it without loading a session", async () => {
 	const { control, ctx } = createControl(1);
 	const record = queuedRecord(1);

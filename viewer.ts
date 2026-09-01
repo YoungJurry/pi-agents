@@ -95,7 +95,9 @@ export class AgentPickerComponent {
 
 	private refresh(): void {
 		const selectedPath = this.agents[this.selectedIndex]?.path;
-		this.agents = this.loadAgents().filter((agent) => agent.path !== ROOT_PATH);
+		this.agents = this.loadAgents()
+			.filter((agent) => agent.path !== ROOT_PATH)
+			.sort((left, right) => (right.lastAssignedAt ?? 0) - (left.lastAssignedAt ?? 0));
 		const nextIndex = selectedPath ? this.agents.findIndex((agent) => agent.path === selectedPath) : -1;
 		this.selectedIndex = nextIndex >= 0
 			? nextIndex
