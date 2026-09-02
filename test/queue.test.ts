@@ -44,7 +44,7 @@ test("queued agents start only when execution slots are available", async () => 
 	for (const record of records) (control as any).agentsByPath.set(record.path, record);
 	const launched: string[] = [];
 	(control as any).ensureLoaded = async (record: any) => {
-		record.session = {};
+		record.session = { isIdle: true, dispose: () => undefined };
 		record.loaded = true;
 	};
 	(control as any).launch = (record: any, content: string) => {
@@ -67,6 +67,110 @@ test("queued agents start only when execution slots are available", async () => 
 	assert.deepEqual(records.map((record) => record.status), ["completed", "running", "running", "queued"]);
 	assert.equal(control.view(records[3]).queuePosition, 1);
 	assert.deepEqual(launched.map((item) => item.split(":")[0]), ["/root/task_1", "/root/task_2", "/root/task_3"]);
+});
+
+test("temporary resident saturation keeps work queued instead of failing it", async () => {
+	const { control } = createControl(2);
+	const running = {
+		...queuedRecord(1),
+		status: "running",
+		loaded: true,
+		holdsExecutionSlot: true,
+		session: { isIdle: false, dispose: () => undefined },
+	};
+	const settling = {
+		...queuedRecord(2),
+		status: "completed",
+		loaded: true,
+		holdsExecutionSlot: false,
+		session: { isIdle: false, dispose: () => undefined },
+	};
+	const waiting = queuedRecord(3);
+	for (const record of [running, settling, waiting]) (control as any).agentsByPath.set(record.path, record);
+	(control as any).activeExecutionSlots = 1;
+	(control as any).ensureLoaded = async (record: any) => {
+		record.session = {};
+		record.loaded = true;
+	};
+	(control as any).launch = (record: any) => {
+		record.status = "running";
+		record.statusMessage = undefined;
+	};
+
+	await (control as any).scheduleQueued();
+	assert.equal(waiting.status, "queued");
+	assert.equal(waiting.statusMessage, "waiting for an execution slot");
+	assert.equal(waiting.finalAnswer, undefined);
+	assert.equal((control as any).activeExecutionSlots, 1);
+
+	settling.session.isIdle = true;
+	await (control as any).scheduleQueued();
+	assert.equal(settling.loaded, false);
+	assert.equal(waiting.status, "running");
+	assert.equal((control as any).activeExecutionSlots, 2);
+});
+
+test("settled sessions release slots before queued work starts", async () => {
+	const { control } = createControl(1);
+	let emit: ((event: any) => void) | undefined;
+	const settling = {
+		...queuedRecord(1),
+		status: "completed",
+		loaded: true,
+		holdsExecutionSlot: true,
+		session: {
+			isIdle: false,
+			dispose: () => undefined,
+			subscribe: (listener: (event: any) => void) => {
+				emit = listener;
+				return () => undefined;
+			},
+		},
+	};
+	const waiting = queuedRecord(2);
+	for (const record of [settling, waiting]) (control as any).agentsByPath.set(record.path, record);
+	(control as any).activeExecutionSlots = 1;
+	(control as any).ensureLoaded = async (record: any) => {
+		record.session = {};
+		record.loaded = true;
+	};
+	(control as any).launch = (record: any) => {
+		record.status = "running";
+		record.statusMessage = undefined;
+	};
+	(control as any).subscribe(settling);
+
+	await (control as any).scheduleQueued();
+	assert.equal(waiting.status, "queued");
+	settling.session.isIdle = true;
+	emit?.({ type: "agent_settled" });
+	await new Promise<void>((resolve) => setImmediate(resolve));
+
+	assert.equal(settling.loaded, false);
+	assert.equal(waiting.status, "running");
+	assert.equal((control as any).activeExecutionSlots, 1);
+});
+
+test("scheduler reruns when a wake-up arrives during a blocked pass", async () => {
+	const { control } = createControl(1);
+	const waiting = queuedRecord(1);
+	(control as any).agentsByPath.set(waiting.path, waiting);
+	let attempts = 0;
+	(control as any).startQueued = async (record: any) => {
+		attempts++;
+		if (attempts === 1) {
+			queueMicrotask(() => void (control as any).scheduleQueued());
+			return false;
+		}
+		record.status = "running";
+		(control as any).activeExecutionSlots = 1;
+		return true;
+	};
+
+	await (control as any).scheduleQueued();
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	assert.equal(attempts, 2);
+	assert.equal(waiting.status, "running");
 });
 
 test("follow-up task refreshes assignment recency for reused agents", async () => {

@@ -163,6 +163,7 @@ export class AgentControl {
 	private modelRuntimePromise?: Promise<ModelRuntime>;
 	private activeExecutionSlots = 0;
 	private schedulerPromise?: Promise<void>;
+	private schedulerRerunRequested = false;
 	private spawnOperationTail: Promise<void> = Promise.resolve();
 	private disposed = false;
 	private shuttingDown = false;
@@ -603,15 +604,22 @@ export class AgentControl {
 		return loader;
 	}
 
-	private async evictForResidency(protectedPath?: string): Promise<void> {
+	private tryEvictForResidency(protectedPath?: string): boolean {
 		const allResidents = [...this.agentsByPath.values()].filter((record) => record.loaded);
-		if (allResidents.length < this.maxResidentSubagents) return;
+		if (allResidents.length < this.maxResidentSubagents) return true;
 		const candidate = allResidents
 			.filter((record) => record.path !== protectedPath)
 			.filter((record) => record.status !== "running" && !record.holdsExecutionSlot && record.session?.isIdle !== false)
 			.sort((left, right) => left.lastUsedAt - right.lastUsedAt)[0];
-		if (!candidate) throw new Error(`agent residency limit reached (${this.maxResidentSubagents}); all resident agents are busy`);
+		if (!candidate) return false;
 		this.unload(candidate);
+		return true;
+	}
+
+	private async evictForResidency(protectedPath?: string): Promise<void> {
+		if (!this.tryEvictForResidency(protectedPath)) {
+			throw new Error(`agent residency limit reached (${this.maxResidentSubagents}); all resident agents are busy`);
+		}
 	}
 
 	private unload(record: AgentRecord): void {
@@ -656,6 +664,13 @@ export class AgentControl {
 					this.noteTurnEnd(record.path, lastAssistant?.role === "assistant" ? lastAssistant.stopReason : undefined);
 				}
 			}
+			if (event.type === "agent_settled") {
+				this.releaseExecutionSlot(record);
+				this.persistState();
+				// Let AgentSession finish emitting its settled event before an LRU eviction
+				// can dispose this now-idle session.
+				queueMicrotask(() => void this.scheduleQueued());
+			}
 			this.changed();
 		});
 	}
@@ -686,10 +701,8 @@ export class AgentControl {
 		if (answer.aborted) {
 			record.status = "interrupted";
 			record.statusMessage = "interrupted";
-			this.releaseExecutionSlot(record);
 			this.persistState();
 			this.changed();
-			void this.scheduleQueued();
 			return;
 		}
 		if (answer.error) {
@@ -702,10 +715,8 @@ export class AgentControl {
 			record.statusMessage = undefined;
 		}
 		this.writeAgentResult(record);
-		this.releaseExecutionSlot(record);
 		this.persistState();
 		this.changed();
-		void this.scheduleQueued();
 		void this.deliver(record.path, record.parentPath, this.completionNotice(record), false, "AGENT_STATUS").catch(() => {});
 	}
 
@@ -862,8 +873,11 @@ export class AgentControl {
 		return records;
 	}
 
-	private async startQueued(record: AgentRecord): Promise<void> {
-		if (record.status !== "queued") return;
+	private async startQueued(record: AgentRecord): Promise<boolean> {
+		if (record.status !== "queued") return true;
+		// A completed AgentSession emits agent_end just before it becomes idle. Treat a
+		// temporarily full resident set as backpressure, not as a permanent task error.
+		if (!record.session && !this.tryEvictForResidency(record.path)) return false;
 		this.reserveExecutionSlot();
 		record.holdsExecutionSlot = true;
 		record.status = "pending_init";
@@ -877,7 +891,7 @@ export class AgentControl {
 				record.statusMessage = "waiting for an execution slot";
 				this.releaseExecutionSlot(record);
 				this.unload(record);
-				return;
+				return true;
 			}
 			const content = [...(record.queuedMail ?? []), record.queuedMessage].filter((item): item is string => Boolean(item)).join("\n\n");
 			if ((record.queuedMail?.length ?? 0) > 0) this.mailboxPending.set(record.path, 0);
@@ -885,6 +899,7 @@ export class AgentControl {
 			record.queuedMail = undefined;
 			this.launch(record, content);
 			this.persistState();
+			return true;
 		} catch (error) {
 			record.status = "errored";
 			record.statusMessage = error instanceof Error ? error.message : String(error);
@@ -896,6 +911,7 @@ export class AgentControl {
 			this.writeAgentResult(record);
 			this.persistState();
 			void this.deliver(record.path, record.parentPath, this.completionNotice(record), false, "AGENT_STATUS").catch(() => {});
+			return true;
 		}
 	}
 
@@ -903,20 +919,26 @@ export class AgentControl {
 		while (!this.disposed && !this.shuttingDown && this.activeExecutionSlots < this.maxConcurrentSubagents) {
 			const next = this.queuedRecords()[0];
 			if (!next) break;
-			await this.startQueued(next);
+			if (!(await this.startQueued(next))) break;
 		}
 	}
 
 	private async scheduleQueued(): Promise<void> {
 		if (this.disposed || this.shuttingDown) return;
-		if (this.schedulerPromise) return this.schedulerPromise;
+		if (this.schedulerPromise) {
+			this.schedulerRerunRequested = true;
+			return this.schedulerPromise;
+		}
+		this.schedulerRerunRequested = false;
 		const operation = this.runQueuedScheduler();
 		this.schedulerPromise = operation;
 		try {
 			await operation;
 		} finally {
+			const rerun = this.schedulerRerunRequested;
+			this.schedulerRerunRequested = false;
 			if (this.schedulerPromise === operation) this.schedulerPromise = undefined;
-			if (!this.disposed && !this.shuttingDown && this.activeExecutionSlots < this.maxConcurrentSubagents && this.queuedRecords().length > 0) {
+			if (rerun && !this.disposed && !this.shuttingDown) {
 				queueMicrotask(() => void this.scheduleQueued());
 			}
 		}

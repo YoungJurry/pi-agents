@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.2 - 2026-09-02
+
+- Keep execution slots reserved until an `AgentSession` is fully settled and safe to evict.
+- Treat temporary resident saturation as queue backpressure instead of permanently failing waiting agents.
+- Resume blocked FIFO scheduling on settlement without busy-looping or losing wake-up signals.
+- Add regression coverage for the batch overflow race that previously produced `agent residency limit reached` errors.
+
 ## 0.7.1 - 2026-09-01
 
 - Order the `/agents` picker by latest task assignment, newest first, instead of alphabetically.
