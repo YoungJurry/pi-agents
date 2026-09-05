@@ -21,8 +21,16 @@ test("one batch spawn action handles both single and multiple tasks", () => {
 	assert.equal(Value.Check(spawn.parameters, { task_name: "legacy", message: "Old shape" }), false);
 });
 
-test("wait result sends only mailbox notices to the model and folds the tree in TUI", async () => {
+test("wait result sends only mailbox notices and folds child status without counting its caller", async () => {
 	const agents = [
+		{
+			id: "root",
+			path: "/root",
+			model: "test/main-model",
+			thinkingLevel: "high" as const,
+			status: "running" as const,
+			loaded: true,
+		},
 		{
 			id: "done-1",
 			path: "/root/newly_done",
@@ -60,11 +68,14 @@ test("wait result sends only mailbox notices to the model and folds the tree in 
 	assert.ok(waitAgent.renderResult);
 	const collapsed = waitAgent.renderResult(output, { expanded: false, isPartial: false }, theme, {} as any).render(200).join("\n");
 	assert.match(collapsed, /2 agents hidden/);
+	assert.match(collapsed, /2 completed/);
+	assert.doesNotMatch(collapsed, /running/);
 	assert.match(collapsed, /Ctrl\+O to expand/);
 	assert.doesNotMatch(collapsed, /old_history/);
 	const expanded = waitAgent.renderResult(output, { expanded: true, isPartial: false }, theme, {} as any).render(200).join("\n");
 	assert.match(expanded, /newly_done/);
 	assert.match(expanded, /old_history/);
+	assert.doesNotMatch(expanded, /test\/main-model/);
 });
 
 test("status view explicitly reports waiting agents and queue capacity", async () => {

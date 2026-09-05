@@ -180,7 +180,7 @@ The settings file is optional, but spawning requires a model from either the tas
 - Referenced legacy flat child files are migrated when their main session is resumed
 - Parents receive a compact completion notice instead of the full answer; use `list_agents(view="results")` or read the result file on demand
 - Notices to a busy agent are queued safely: `wait_agent` returns them in its own result, and any leftovers are delivered right after a successful recipient turn
-- `wait_agent` sends only newly queued mailbox notices to the model; its full status tree is folded in the TUI by default and can be toggled with `Ctrl+O`
+- `wait_agent` sends only newly queued mailbox notices to the model; its child status tree excludes the active caller, is folded in the TUI by default, and can be toggled with `Ctrl+O`
 - Failed notice delivery is re-queued instead of silently discarded
 - Notices pending when a turn is aborted or errors are deferred to the next explicit turn without restarting the interrupted agent
 - The extension never inserts messages between an assistant tool call and its tool result, keeping session history protocol-valid for strict gateways

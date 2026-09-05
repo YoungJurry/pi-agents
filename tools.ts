@@ -200,7 +200,7 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 			const outcome = await control.waitForMailbox(ctx, params.timeout_ms, signal);
 			if (outcome.aborted) throw new Error("wait_agent was aborted");
 			const notices = control.drainPendingMail(sender);
-			const agents = control.list(ctx);
+			const agents = control.list(ctx, sender).filter((agent) => agent.path !== sender);
 			const text = notices.length > 0
 				? `Mailbox activity received:\n\n${notices.join("\n\n")}`
 				: outcome.timedOut

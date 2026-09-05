@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.5 - 2026-09-05
+
+- Exclude the active `wait_agent` caller from its folded child-status summary.
+- Prevent the root Agent's necessarily `running` tool turn from appearing as a phantom running sub-agent.
+- Scope nested waits to the caller's own subtree while preserving `Ctrl+O` expansion.
+
 ## 0.7.4 - 2026-09-05
 
 - Match Pi's progressive Skill disclosure for sub-agent Roles instead of eagerly injecting complete `SKILL.md` files.
