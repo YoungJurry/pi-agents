@@ -88,7 +88,7 @@ function renderCollaborationResult(
 					role.model ? `model: ${role.model}` : undefined,
 					role.thinkingLevel ? `thinking: ${role.thinkingLevel}` : undefined,
 					`tools: ${role.tools?.join(", ") || "default set"}`,
-					role.skills?.length ? `skills: ${role.skills.join(", ")}` : undefined,
+					`skills: ${role.skills.length > 0 ? role.skills.join(", ") : "none"}`,
 				].filter(Boolean).join(" · ");
 				lines.push(`    ${theme.fg("accent", role.name)} — ${role.description}`);
 				lines.push(`      ${theme.fg("dim", configuration)}`);

@@ -134,7 +134,7 @@ nickname_candidates: [Ada, Grace]
 Review carefully and return findings with exact paths.
 ```
 
-`skills` is optional. Each named Skill must be discoverable by Pi. Its complete `SKILL.md` is loaded into that Role's child system prompt, including for tightly restricted Roles that do not expose `read` or `bash`. Relative references remain rooted at the Skill's base directory. Unknown Skill names fail explicitly instead of silently weakening the Role. Roles without `skills` retain Pi's normal progressive disclosure: the Skill catalog appears only when `read` or `bash` is active, and the child decides whether to load a matching Skill.
+`skills` optionally filters Pi's normal progressive Skill disclosure. Omit the field to inherit all discoverable Skills, specify names such as `skills: [document]` to expose only those Skill names/descriptions/paths, or use `skills: []` to expose none. The child still reads a matching `SKILL.md` on demand rather than placing complete Skill instructions in every prompt. As in Pi's main Agent, the catalog is shown only when `read` or `bash` is active. Unknown explicitly selected Skill names fail clearly instead of being silently ignored.
 
 ## Model configuration
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.4 - 2026-09-05
+
+- Match Pi's progressive Skill disclosure for sub-agent Roles instead of eagerly injecting complete `SKILL.md` files.
+- Let an omitted `skills` field inherit all discoverable Skills, an explicit list expose only those Skills, and `skills: []` expose none.
+- Preserve explicit unknown-Skill validation and report inherited Role skills as `*` through on-demand Role discovery.
+
 ## 0.7.3 - 2026-09-05
 
 - Fold the full `wait_agent` status tree by default and reuse Pi's `Ctrl+O` expansion state to reveal it on demand.

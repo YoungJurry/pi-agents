@@ -23,7 +23,7 @@ import {
 	rootAgentInstructions,
 	sanitizeForkMessages,
 } from "./context.ts";
-import { discoverRoles, formatAssignedSkills, resolveRole } from "./roles.ts";
+import { discoverRoles, resolveRole, selectRoleSkills } from "./roles.ts";
 import {
 	DEFAULT_CHILD_THINKING_LEVEL,
 	DEFAULT_MAX_CONCURRENT_SUBAGENTS,
@@ -594,8 +594,7 @@ export class AgentControl {
 		assignedSkillNames?: readonly string[],
 	): Promise<DefaultResourceLoader> {
 		const selfPath = path.resolve(this.selfExtensionPath);
-		let loader: DefaultResourceLoader;
-		loader = new DefaultResourceLoader({
+		const loader = new DefaultResourceLoader({
 			cwd,
 			agentDir: getAgentDir(),
 			settingsManager,
@@ -603,11 +602,14 @@ export class AgentControl {
 				...base,
 				extensions: base.extensions.filter((extension) => path.resolve(extension.resolvedPath) !== selfPath),
 			}),
-			systemPromptOverride: (base) => [
-				base || "You are a coding agent.",
-				instructions,
-				formatAssignedSkills(assignedSkillNames, loader.getSkills().skills),
-			].filter((part) => part.trim()).join("\n\n"),
+			...(assignedSkillNames === undefined ? {} : {
+				skillsOverride: (base: ReturnType<DefaultResourceLoader["getSkills"]>) => ({
+					...base,
+					skills: selectRoleSkills(assignedSkillNames, base.skills),
+				}),
+			}),
+			systemPromptOverride: (base) => [base || "You are a coding agent.", instructions]
+				.filter((part) => part.trim()).join("\n\n"),
 		});
 		await loader.reload();
 		this.captureTranscriptToolDefinitions(loader);
@@ -1151,7 +1153,7 @@ export class AgentControl {
 			model: role.model || settings.defaultModel,
 			thinkingLevel: role.thinkingLevel ?? settings.defaultThinkingLevel ?? DEFAULT_CHILD_THINKING_LEVEL,
 			tools: role.tools,
-			skills: role.skills,
+			skills: role.skills ?? ["*"],
 			source: role.source,
 		}));
 	}

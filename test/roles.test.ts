@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
-import { discoverRoles, formatAssignedSkills } from "../roles.ts";
+import { discoverRoles, selectRoleSkills } from "../roles.ts";
 
 test("Role frontmatter discovers explicitly assigned skills", () => {
 	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agents-role-"));
@@ -18,33 +18,37 @@ skills: [agent-browser, document]
 
 Research carefully.
 `, "utf8");
+	fs.writeFileSync(path.join(rolesDirectory, "inherited.md"), `---
+name: inherited
+description: Inherit all Skills
+---
+`, "utf8");
+	fs.writeFileSync(path.join(rolesDirectory, "none.md"), `---
+name: none
+description: Disable all Skills
+skills: []
+---
+`, "utf8");
 	try {
-		const role = discoverRoles(directory, true).find((candidate) => candidate.name === "researcher");
-		assert.deepEqual(role?.skills, ["agent-browser", "document"]);
+		const roles = discoverRoles(directory, true);
+		assert.deepEqual(roles.find((candidate) => candidate.name === "researcher")?.skills, ["agent-browser", "document"]);
+		assert.equal(roles.find((candidate) => candidate.name === "inherited")?.skills, undefined);
+		assert.deepEqual(roles.find((candidate) => candidate.name === "none")?.skills, []);
 	} finally {
 		fs.rmSync(directory, { recursive: true, force: true });
 	}
 });
 
-test("assigned skills inject complete SKILL.md instructions", () => {
-	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agents-skill-"));
-	const filePath = path.join(directory, "SKILL.md");
-	fs.writeFileSync(filePath, "---\nname: sample\ndescription: Sample skill\n---\n\nFollow the complete procedure.", "utf8");
-	const discovered = [{
-		name: "sample",
-		description: "Sample skill",
-		filePath,
-		baseDir: directory,
+test("explicit Role skills filter the progressively disclosed catalog", () => {
+	const discovered = ["sample", "other"].map((name) => ({
+		name,
+		description: `${name} skill`,
+		filePath: `/skills/${name}/SKILL.md`,
+		baseDir: `/skills/${name}`,
 		disableModelInvocation: false,
 		sourceInfo: {},
-	}] as any;
-	try {
-		const prompt = formatAssignedSkills(["sample"], discovered);
-		assert.match(prompt, /<agent_skills>/);
-		assert.match(prompt, /Follow the complete procedure\./);
-		assert.match(prompt, new RegExp(directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-		assert.throws(() => formatAssignedSkills(["missing"], discovered), /unknown skill.*missing/i);
-	} finally {
-		fs.rmSync(directory, { recursive: true, force: true });
-	}
+	})) as any;
+	assert.deepEqual(selectRoleSkills(["sample"], discovered).map((skill) => skill.name), ["sample"]);
+	assert.deepEqual(selectRoleSkills([], discovered), []);
+	assert.throws(() => selectRoleSkills(["missing"], discovered), /unknown skill.*missing/i);
 });

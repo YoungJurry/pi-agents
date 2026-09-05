@@ -45,6 +45,11 @@ function stringList(value: unknown): string[] | undefined {
 	return result.length > 0 ? result : undefined;
 }
 
+function optionalStringList(value: unknown): string[] | undefined {
+	if (value === undefined) return undefined;
+	return stringList(value) ?? [];
+}
+
 function loadDirectory(directory: string, source: "user" | "project"): AgentRole[] {
 	if (!fs.existsSync(directory)) return [];
 	let entries: fs.Dirent[];
@@ -68,7 +73,7 @@ function loadDirectory(directory: string, source: "user" | "project"): AgentRole
 				description: frontmatter.description.trim(),
 				systemPrompt: body.trim(),
 				tools: stringList(frontmatter.tools),
-				skills: stringList(frontmatter.skills),
+				skills: optionalStringList(frontmatter.skills),
 				model: typeof frontmatter.model === "string" ? frontmatter.model.trim() : undefined,
 				thinkingLevel: thinking,
 				nicknameCandidates: stringList(frontmatter.nickname_candidates),
@@ -117,18 +122,12 @@ export function resolveRole(cwd: string, projectTrusted: boolean, name?: string)
 	return role;
 }
 
-export function formatAssignedSkills(requestedNames: readonly string[] | undefined, discoveredSkills: readonly Skill[]): string {
-	if (!requestedNames?.length) return "";
+export function selectRoleSkills(requestedNames: readonly string[], discoveredSkills: readonly Skill[]): Skill[] {
 	const skillsByName = new Map(discoveredSkills.map((skill) => [skill.name, skill]));
 	const missing = requestedNames.filter((name) => !skillsByName.has(name));
 	if (missing.length > 0) {
 		const available = [...skillsByName.keys()].sort().join(", ") || "none";
 		throw new Error(`Role references unknown skill(s): ${missing.join(", ")}. Available skills: ${available}`);
 	}
-	const sections = requestedNames.map((name) => {
-		const skill = skillsByName.get(name)!;
-		const instructions = fs.readFileSync(skill.filePath, "utf8").trim();
-		return `<skill>\nName: ${skill.name}\nLocation: ${skill.filePath}\nBase directory: ${skill.baseDir}\n\n${instructions}\n</skill>`;
-	});
-	return `<agent_skills>\nThe following Role-selected skills are fully loaded. Follow them when completing the task. Resolve relative paths against each skill's base directory.\n\n${sections.join("\n\n")}\n</agent_skills>`;
+	return [...new Set(requestedNames)].map((name) => skillsByName.get(name)!);
 }
