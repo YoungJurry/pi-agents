@@ -23,7 +23,7 @@ import {
 	rootAgentInstructions,
 	sanitizeForkMessages,
 } from "./context.ts";
-import { discoverRoles, resolveRole } from "./roles.ts";
+import { discoverRoles, formatAssignedSkills, resolveRole } from "./roles.ts";
 import {
 	DEFAULT_CHILD_THINKING_LEVEL,
 	DEFAULT_MAX_CONCURRENT_SUBAGENTS,
@@ -587,9 +587,15 @@ export class AgentControl {
 		await this.transcriptToolDefinitionsPromise;
 	}
 
-	private async createLoader(cwd: string, settingsManager: SettingsManager, instructions: string): Promise<DefaultResourceLoader> {
+	private async createLoader(
+		cwd: string,
+		settingsManager: SettingsManager,
+		instructions: string,
+		assignedSkillNames?: readonly string[],
+	): Promise<DefaultResourceLoader> {
 		const selfPath = path.resolve(this.selfExtensionPath);
-		const loader = new DefaultResourceLoader({
+		let loader: DefaultResourceLoader;
+		loader = new DefaultResourceLoader({
 			cwd,
 			agentDir: getAgentDir(),
 			settingsManager,
@@ -597,7 +603,11 @@ export class AgentControl {
 				...base,
 				extensions: base.extensions.filter((extension) => path.resolve(extension.resolvedPath) !== selfPath),
 			}),
-			systemPromptOverride: (base) => `${base || "You are a coding agent."}\n\n${instructions}`,
+			systemPromptOverride: (base) => [
+				base || "You are a coding agent.",
+				instructions,
+				formatAssignedSkills(assignedSkillNames, loader.getSkills().skills),
+			].filter((part) => part.trim()).join("\n\n"),
 		});
 		await loader.reload();
 		this.captureTranscriptToolDefinitions(loader);
@@ -1141,6 +1151,7 @@ export class AgentControl {
 			model: role.model || settings.defaultModel,
 			thinkingLevel: role.thinkingLevel ?? settings.defaultThinkingLevel ?? DEFAULT_CHILD_THINKING_LEVEL,
 			tools: role.tools,
+			skills: role.skills,
 			source: role.source,
 		}));
 	}
@@ -1275,7 +1286,12 @@ export class AgentControl {
 		const forkContext = this.forkContextFromSessionManager(sessionManager);
 		const role = resolveRole(this.root.cwd, this.root.ctx.isProjectTrusted(), record.role);
 		const settingsManager = SettingsManager.create(this.root.cwd, getAgentDir());
-		const loader = await this.createLoader(this.root.cwd, settingsManager, this.childInstructions(record, role.systemPrompt));
+		const loader = await this.createLoader(
+			this.root.cwd,
+			settingsManager,
+			this.childInstructions(record, role.systemPrompt),
+			role.skills,
+		);
 		const runtime = await this.getModelRuntime(this.root.ctx);
 		const model = runtime.getModel(record.modelProvider, record.modelId) || this.root.model;
 		if (!model) throw new Error(`model ${record.modelProvider}/${record.modelId} is unavailable`);

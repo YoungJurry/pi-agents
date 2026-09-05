@@ -146,6 +146,7 @@ export interface AgentRoleView {
 	model?: string;
 	thinkingLevel?: ThinkingLevel;
 	tools?: string[];
+	skills?: string[];
 	source: "builtin" | "user" | "project";
 }
 
@@ -154,6 +155,7 @@ export interface AgentRole {
 	description: string;
 	systemPrompt: string;
 	tools?: string[];
+	skills?: string[];
 	model?: string;
 	thinkingLevel?: ThinkingLevel;
 	nicknameCandidates?: string[];

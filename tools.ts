@@ -71,7 +71,14 @@ function renderCollaborationResult(
 	}
 	const icon = data.timedOut ? theme.fg("warning", "◷") : theme.fg("success", "✓");
 	const lines = [`${icon} ${theme.fg("toolTitle", data.tool)}`];
-	for (const agent of data.targets) lines.push(`  ${theme.fg("accent", compactStatus(agent))}`);
+	if (data.tool === "wait_agent" && data.targets.length > 0 && !options.expanded) {
+		const counts = new Map<string, number>();
+		for (const agent of data.targets) counts.set(agent.status, (counts.get(agent.status) ?? 0) + 1);
+		const summary = [...counts.entries()].map(([status, count]) => `${count} ${status}`).join(" · ");
+		lines.push(`  ${theme.fg("muted", `${data.targets.length} agents hidden · ${summary} · Ctrl+O to expand`)}`);
+	} else {
+		for (const agent of data.targets) lines.push(`  ${theme.fg("accent", compactStatus(agent))}`);
+	}
 	if (data.roles?.length) {
 		lines.push(`  ${theme.fg("muted", "Roles:")} ${data.roles.map((role) => role.name).join(", ")}`);
 		if (options.expanded) {
@@ -81,6 +88,7 @@ function renderCollaborationResult(
 					role.model ? `model: ${role.model}` : undefined,
 					role.thinkingLevel ? `thinking: ${role.thinkingLevel}` : undefined,
 					`tools: ${role.tools?.join(", ") || "default set"}`,
+					role.skills?.length ? `skills: ${role.skills.join(", ")}` : undefined,
 				].filter(Boolean).join(" · ");
 				lines.push(`    ${theme.fg("accent", role.name)} — ${role.description}`);
 				lines.push(`      ${theme.fg("dim", configuration)}`);

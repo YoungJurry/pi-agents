@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter, type Skill } from "@earendil-works/pi-coding-agent";
 import type { AgentRole } from "./types.ts";
 
 const BUILTIN_ROLES: AgentRole[] = [
@@ -31,6 +31,7 @@ type RoleFrontmatter = {
 	name?: unknown;
 	description?: unknown;
 	tools?: unknown;
+	skills?: unknown;
 	model?: unknown;
 	thinking?: unknown;
 	nickname_candidates?: unknown;
@@ -67,6 +68,7 @@ function loadDirectory(directory: string, source: "user" | "project"): AgentRole
 				description: frontmatter.description.trim(),
 				systemPrompt: body.trim(),
 				tools: stringList(frontmatter.tools),
+				skills: stringList(frontmatter.skills),
 				model: typeof frontmatter.model === "string" ? frontmatter.model.trim() : undefined,
 				thinkingLevel: thinking,
 				nicknameCandidates: stringList(frontmatter.nickname_candidates),
@@ -113,4 +115,20 @@ export function resolveRole(cwd: string, projectTrusted: boolean, name?: string)
 		throw new Error(`unknown agent_type '${roleName}'. Available roles: ${names}`);
 	}
 	return role;
+}
+
+export function formatAssignedSkills(requestedNames: readonly string[] | undefined, discoveredSkills: readonly Skill[]): string {
+	if (!requestedNames?.length) return "";
+	const skillsByName = new Map(discoveredSkills.map((skill) => [skill.name, skill]));
+	const missing = requestedNames.filter((name) => !skillsByName.has(name));
+	if (missing.length > 0) {
+		const available = [...skillsByName.keys()].sort().join(", ") || "none";
+		throw new Error(`Role references unknown skill(s): ${missing.join(", ")}. Available skills: ${available}`);
+	}
+	const sections = requestedNames.map((name) => {
+		const skill = skillsByName.get(name)!;
+		const instructions = fs.readFileSync(skill.filePath, "utf8").trim();
+		return `<skill>\nName: ${skill.name}\nLocation: ${skill.filePath}\nBase directory: ${skill.baseDir}\n\n${instructions}\n</skill>`;
+	});
+	return `<agent_skills>\nThe following Role-selected skills are fully loaded. Follow them when completing the task. Resolve relative paths against each skill's base directory.\n\n${sections.join("\n\n")}\n</agent_skills>`;
 }

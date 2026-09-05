@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.3 - 2026-09-05
+
+- Fold the full `wait_agent` status tree by default and reuse Pi's `Ctrl+O` expansion state to reveal it on demand.
+- Keep provider-facing wait results limited to newly queued mailbox notices while avoiding overwhelming TUI output.
+- Add optional Role `skills` frontmatter that injects selected complete `SKILL.md` instructions into child system prompts.
+- Report configured Role skills through on-demand Role discovery and fail clearly when a selected Skill is unavailable.
+
 ## 0.7.2 - 2026-09-02
 
 - Keep execution slots reserved until an `AgentSession` is fully settled and safe to evict.
