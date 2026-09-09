@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1 - 2026-09-10
+
+- Remove automatic legacy-file archival and its full main-session scan; the extension no longer archives or deletes user session data.
+- Retain only the lightweight `codex-agents` → `pi-agents` compatibility migration required for users upgrading directly from 0.7.x; it is a no-op for fresh installations.
+
 ## 0.8.0 - 2026-09-09
 
 - Add `/agent-usage`, a read-only overlay that reports separate main/sub-agent token and cache totals plus combined tokens and cost without modifying root context.

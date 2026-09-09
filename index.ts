@@ -5,7 +5,7 @@ import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { AgentControl } from "./control.ts";
 import { getAgentSettingsPath, loadAgentSettings, resolveAgentLimits } from "./settings.ts";
 import { createCollaborationTools } from "./tools.ts";
-import { archiveUnownedLegacyFiles, migrateLegacyAgentStorage } from "./storage.ts";
+import { migrateLegacyAgentStorage } from "./storage.ts";
 import { EXTENSION_ID, ROOT_PATH, type AgentLifecycleStatus, type AgentView } from "./types.ts";
 import { AgentPickerComponent, AgentTranscriptViewer, AgentUsageViewer, formatAgentUsage } from "./viewer.ts";
 
@@ -101,7 +101,6 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 	let activeContext: ExtensionContext | undefined;
 	let widgetTui: { requestRender(): void } | undefined;
 	let storageMigrationReported = false;
-	let legacyArchiveStarted = false;
 
 	const updateUi = () => {
 		const ctx = activeContext;
@@ -134,18 +133,6 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify(`Migrated agent storage to ~/.pi/agent/pi-agents (${storageMigration.movedEntries} entries).`, "info");
 			}
 			for (const warning of storageMigration.warnings) ctx.ui.notify(`Agent storage migration: ${warning}`, "warning");
-		}
-		if (!legacyArchiveStarted) {
-			legacyArchiveStarted = true;
-			void archiveUnownedLegacyFiles().then((report) => {
-				const current = activeContext;
-				if (!current) return;
-				if (report.error) {
-					current.ui.notify(`Legacy agent archive skipped: ${report.error}`, "warning");
-				} else if (report.archivedFiles > 0) {
-					current.ui.notify(`Archived ${report.archivedFiles} unowned legacy agent files to ${report.archiveDirectory}.`, "info");
-				}
-			});
 		}
 		const resumedExistingSession = event.reason === "resume"
 			|| (event.reason === "startup" && ctx.sessionManager.getEntries().some((entry) => entry.type === "message"));

@@ -189,8 +189,8 @@ The settings file is optional, but spawning requires a model from either the tas
 - Each root storage group records its owning main-session file in `owner.json`
 - The former `~/.pi/agent/codex-agents/` directory and `agents-setting.json` filename migrate automatically without overwriting newer files
 - Resuming an existing main session removes groups whose owning main-session file has been deleted; new sessions and `/reload` do not trigger grouped cleanup
-- Legacy flat files are archived only after every ordinary Pi main session has been scanned and no persisted agent-state reference exists
 - Referenced legacy flat child files are migrated when their main session is resumed
+- The extension never automatically archives or deletes legacy flat files
 - Parents receive a compact completion notice instead of the full answer; use `list_agents(view="results")` or read the result file on demand
 - Notices to a busy agent are queued safely: `wait_agent` returns them in its own result, and any leftovers are delivered right after a successful recipient turn
 - `wait_agent` sends only newly queued mailbox notices to the model; its child status tree excludes the active caller, is folded in the TUI by default, and can be toggled with `Ctrl+O`
