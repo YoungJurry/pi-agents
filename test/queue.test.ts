@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import test from "node:test";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { AgentControl } from "../control.ts";
-import { ROOT_PATH, STATE_ENTRY_TYPE, type PersistedAgent, type PersistedTreeState } from "../types.ts";
+import {
+	CHILD_META_ENTRY_TYPE,
+	FORK_CONTEXT_ENTRY_TYPE,
+	ROOT_PATH,
+	STATE_ENTRY_TYPE,
+	type PersistedAgent,
+	type PersistedTreeState,
+} from "../types.ts";
 
 function queuedRecord(index: number): any {
 	return {
@@ -37,6 +48,53 @@ function createControl(limit = 2): { control: AgentControl; ctx: any } {
 	(control as any).pathBySessionId.set("root-session", ROOT_PATH);
 	return { control, ctx };
 }
+
+test("queued batch sessions durably preserve identity, metadata, and fork context", () => {
+	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agents-queue-session-"));
+	try {
+		const { control, ctx } = createControl(1);
+		(control as any).childSessionDirectory = path.join(directory, "sessions");
+		const forkMessage = { role: "user", content: "parent context", timestamp: 1 };
+		const records = (control as any).materializeQueuedBatch(ctx, [{
+			request: { taskName: "research", message: "Investigate" },
+			childPath: "/root/research",
+			callerPath: ROOT_PATH,
+			role: { name: "default", nicknameCandidates: ["Ada"] },
+			selectedModel: { provider: "test", id: "model" },
+			thinkingLevel: "high",
+			forkMessages: [forkMessage],
+		}]);
+		const record = records[0];
+		assert.ok(record?.sessionFile);
+		assert.equal(fs.existsSync(record.sessionFile), true);
+		const reopened = SessionManager.open(record.sessionFile);
+		assert.equal(reopened.getSessionId(), record.id);
+		const childMeta = reopened.getEntries().find((entry) => entry.type === "custom" && entry.customType === CHILD_META_ENTRY_TYPE);
+		assert.deepEqual((childMeta as any)?.data, {
+			path: "/root/research",
+			parentPath: ROOT_PATH,
+			rootSessionId: "root-session",
+			role: "default",
+		});
+		const forkContext = reopened.getEntries().find((entry) => entry.type === "custom" && entry.customType === FORK_CONTEXT_ENTRY_TYPE);
+		assert.deepEqual((forkContext as any)?.data?.messages, [forkMessage]);
+		reopened.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "ready" }],
+			api: "test",
+			provider: "test",
+			model: "model",
+			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			stopReason: "stop",
+			timestamp: 2,
+		});
+		const persistedLines = fs.readFileSync(record.sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+		assert.equal(persistedLines.filter((entry) => entry.type === "session").length, 1);
+		assert.equal(persistedLines.some((entry) => entry.type === "custom" && entry.customType === FORK_CONTEXT_ENTRY_TYPE), true);
+	} finally {
+		fs.rmSync(directory, { recursive: true, force: true });
+	}
+});
 
 test("queued agents start only when execution slots are available", async () => {
 	const { control } = createControl(2);

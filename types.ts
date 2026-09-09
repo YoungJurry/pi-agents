@@ -104,6 +104,23 @@ export interface AgentCounts {
 	residentSlots: number;
 }
 
+export interface AgentUsageTotals {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	total: number;
+	cost: number;
+}
+
+export interface AgentUsageReport {
+	main: AgentUsageTotals;
+	subagents: AgentUsageTotals;
+	combined: AgentUsageTotals;
+	subagentCount: number;
+	unreadableSubagents: number;
+}
+
 export interface AgentTranscriptView {
 	agent: AgentView;
 	sessionFile: string;
@@ -137,6 +154,7 @@ export interface ForkContextPayload {
 export interface ChildMetaPayload {
 	path: string;
 	parentPath: string;
+	rootSessionId?: string;
 	role?: string;
 }
 

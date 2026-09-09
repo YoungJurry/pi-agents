@@ -5,8 +5,9 @@ import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { AgentControl } from "./control.ts";
 import { getAgentSettingsPath, loadAgentSettings, resolveAgentLimits } from "./settings.ts";
 import { createCollaborationTools } from "./tools.ts";
+import { archiveUnownedLegacyFiles, migrateLegacyAgentStorage } from "./storage.ts";
 import { EXTENSION_ID, ROOT_PATH, type AgentLifecycleStatus, type AgentView } from "./types.ts";
-import { AgentPickerComponent, AgentTranscriptViewer } from "./viewer.ts";
+import { AgentPickerComponent, AgentTranscriptViewer, AgentUsageViewer, formatAgentUsage } from "./viewer.ts";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
 const WIDGET_KEY = "codex-agents-tree";
@@ -85,6 +86,7 @@ class AgentTreeWidget {
 }
 
 export default function codexAgentsExtension(pi: ExtensionAPI): void {
+	const storageMigration = migrateLegacyAgentStorage();
 	const limits = resolveAgentLimits(loadAgentSettings(), getAgentSettingsPath());
 	const control = new AgentControl(
 		pi,
@@ -98,6 +100,8 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 
 	let activeContext: ExtensionContext | undefined;
 	let widgetTui: { requestRender(): void } | undefined;
+	let storageMigrationReported = false;
+	let legacyArchiveStarted = false;
 
 	const updateUi = () => {
 		const ctx = activeContext;
@@ -124,6 +128,25 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", (event, ctx) => {
 		activeContext = ctx;
 		control.bindRoot(ctx);
+		if (!storageMigrationReported) {
+			storageMigrationReported = true;
+			if (storageMigration.movedEntries > 0) {
+				ctx.ui.notify(`Migrated agent storage to ~/.pi/agent/pi-agents (${storageMigration.movedEntries} entries).`, "info");
+			}
+			for (const warning of storageMigration.warnings) ctx.ui.notify(`Agent storage migration: ${warning}`, "warning");
+		}
+		if (!legacyArchiveStarted) {
+			legacyArchiveStarted = true;
+			void archiveUnownedLegacyFiles().then((report) => {
+				const current = activeContext;
+				if (!current) return;
+				if (report.error) {
+					current.ui.notify(`Legacy agent archive skipped: ${report.error}`, "warning");
+				} else if (report.archivedFiles > 0) {
+					current.ui.notify(`Archived ${report.archivedFiles} unowned legacy agent files to ${report.archiveDirectory}.`, "info");
+				}
+			});
+		}
 		const resumedExistingSession = event.reason === "resume"
 			|| (event.reason === "startup" && ctx.sessionManager.getEntries().some((entry) => entry.type === "message"));
 		if (resumedExistingSession) {
@@ -197,6 +220,36 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 		const body = payload[0] === "Payload:" ? payload.slice(1).join("\n") : payload.join("\n");
 		const header = `${theme.fg("customMessageLabel", theme.bold(title))} ${theme.fg("accent", task)} ${theme.fg("muted", `from ${sender}`)}`;
 		return new Text(`${header}\n${theme.fg("customMessageText", body)}`, 1, 0);
+	});
+
+	pi.registerCommand("agent-usage", {
+		description: "Show main, sub-agent, and combined token usage",
+		handler: async (_args, ctx) => {
+			activeContext = ctx;
+			let report;
+			try {
+				report = control.getUsage(ctx);
+			} catch (error) {
+				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+				return;
+			}
+			if (ctx.mode !== "tui") {
+				ctx.ui.notify(formatAgentUsage(report), "info");
+				return;
+			}
+			const releaseUserOverlay = control.beginUserOverlay();
+			try {
+				await ctx.ui.custom<void>(
+					(_tui, theme, keybindings, done) => new AgentUsageViewer(theme, keybindings, report, done),
+					{
+						overlay: true,
+						overlayOptions: { anchor: "center", width: "62%", maxHeight: "70%", margin: 1 },
+					},
+				);
+			} finally {
+				releaseUserOverlay();
+			}
+		},
 	});
 
 	pi.registerCommand("agents", {

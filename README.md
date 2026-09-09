@@ -56,6 +56,16 @@ Viewer controls:
 
 This inspector is implemented only as a slash command and TUI overlay. It does not register an LLM tool, alter tool schemas or system prompts, add messages to the root context, switch sessions, wake agents, or expose child sessions through the normal `/resume` picker.
 
+## Usage accounting
+
+Pi's built-in `/session` remains the authoritative view of the main Agent and its cache behavior. Use the user-only command below for separately calculated main, sub-agent, and combined totals:
+
+```text
+/agent-usage
+```
+
+The read-only overlay reports main and child token totals, separate cache hit rates, combined tokens/cost, and any unreadable child sessions. It reads persisted child JSONL files without loading or waking their AgentSessions, does not add a main-session message, and does not alter provider-facing context. Pi currently has no extension hook that can add child tokens to built-in `/session` while excluding them from that command's cache statistics.
+
 ## Tools
 
 Only two compact collaboration schemas remain active:
@@ -140,7 +150,7 @@ Review carefully and return findings with exact paths.
 
 Global sub-agent settings live outside the installed package so updates cannot overwrite them:
 
-`~/.pi/agent/codex-agents/agents-setting.json`
+`~/.pi/agent/pi-agents/settings.json`
 
 ```json
 {
@@ -170,13 +180,16 @@ The settings file is optional, but spawning requires a model from either the tas
 - Default resident child sessions: 3, configurable with `maxResidentSubagents`
 - `spawn_agents` starts tasks until all execution slots are occupied and records the remainder as `queued`
 - Queued tasks are lightweight, persistent, FIFO ordered, and do not occupy resident-session capacity
+- Queued session identity, child ownership metadata, and sanitized fork context are durably written before the batch spawn returns
 - `list_agents(view="status")` reports each waiting task's queue position plus current running/queued capacity
 - The live widget shows `Agents active: <running>/<limit> · queued: <waiting>` and labels waiting paths explicitly
 - Completed/interrupted sessions are unloaded by LRU when residency is full
-- Child sessions persist under `~/.pi/agent/codex-agents/roots/<root-session-id>/sessions/` and reload lazily
-- Full final answers persist under `~/.pi/agent/codex-agents/roots/<root-session-id>/results/`
+- Child sessions persist under `~/.pi/agent/pi-agents/roots/<root-session-id>/sessions/` and reload lazily
+- Full final answers persist under `~/.pi/agent/pi-agents/roots/<root-session-id>/results/`
 - Each root storage group records its owning main-session file in `owner.json`
-- Resuming an existing main session removes groups whose owning main-session file has been deleted; new sessions and `/reload` do not trigger cleanup
+- The former `~/.pi/agent/codex-agents/` directory and `agents-setting.json` filename migrate automatically without overwriting newer files
+- Resuming an existing main session removes groups whose owning main-session file has been deleted; new sessions and `/reload` do not trigger grouped cleanup
+- Legacy flat files are archived only after every ordinary Pi main session has been scanned and no persisted agent-state reference exists
 - Referenced legacy flat child files are migrated when their main session is resumed
 - Parents receive a compact completion notice instead of the full answer; use `list_agents(view="results")` or read the result file on demand
 - Notices to a busy agent are queued safely: `wait_agent` returns them in its own result, and any leftovers are delivered right after a successful recipient turn

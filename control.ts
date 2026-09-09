@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Model, Usage } from "@earendil-works/pi-ai";
 import {
 	buildSessionContext,
 	createAgentSession,
@@ -47,12 +47,15 @@ import {
 	type AgentRole,
 	type AgentRoleView,
 	type AgentTranscriptView,
+	type AgentUsageReport,
+	type AgentUsageTotals,
 	type AgentView,
 	type ForkContextPayload,
 	type PersistedAgent,
 	type PersistedTreeState,
 	type RootBinding,
 } from "./types.ts";
+import { getAgentStorageDirectory, resolveMigratedStoragePath } from "./storage.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const MIN_WAIT_TIMEOUT_MS = 10_000;
@@ -98,6 +101,46 @@ interface RootStorageOwner {
 	version: 1;
 	rootSessionId: string;
 	rootSessionFile?: string;
+}
+
+function emptyUsageTotals(): AgentUsageTotals {
+	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, cost: 0 };
+}
+
+function addUsage(target: AgentUsageTotals, usage: Usage | undefined): void {
+	if (!usage) return;
+	target.input += usage.input || 0;
+	target.output += usage.output || 0;
+	target.cacheRead += usage.cacheRead || 0;
+	target.cacheWrite += usage.cacheWrite || 0;
+	target.total = target.input + target.output + target.cacheRead + target.cacheWrite;
+	target.cost += usage.cost?.total || 0;
+}
+
+function addUsageTotals(target: AgentUsageTotals, source: AgentUsageTotals): void {
+	target.input += source.input;
+	target.output += source.output;
+	target.cacheRead += source.cacheRead;
+	target.cacheWrite += source.cacheWrite;
+	target.total = target.input + target.output + target.cacheRead + target.cacheWrite;
+	target.cost += source.cost;
+}
+
+function sessionUsage(sessionManager: Pick<SessionManager, "getEntries">): AgentUsageTotals {
+	const totals = emptyUsageTotals();
+	for (const entry of sessionManager.getEntries()) {
+		if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
+			addUsage(totals, entry.usage);
+		}
+		if (entry.type !== "message") continue;
+		const message = entry.message;
+		if (message.role === "assistant" || message.role === "toolResult") addUsage(totals, message.usage);
+	}
+	return totals;
+}
+
+function normalizeCost(value: number): number {
+	return Math.round(value * 1_000_000_000) / 1_000_000_000;
 }
 
 function normalizeAgentName(name: string): string {
@@ -170,9 +213,9 @@ export class AgentControl {
 	private uiDialogTail: Promise<void> = Promise.resolve();
 	private userOverlayDepth = 0;
 	private readonly userOverlayWaiters = new Set<() => void>();
-	private readonly rootStorageDirectory = path.join(getAgentDir(), "codex-agents", "roots");
-	private childSessionDirectory = path.join(getAgentDir(), "codex-agents", "sessions");
-	private agentResultDirectory = path.join(getAgentDir(), "codex-agents", "results");
+	private readonly rootStorageDirectory = path.join(getAgentStorageDirectory(), "roots");
+	private childSessionDirectory = path.join(getAgentStorageDirectory(), "sessions");
+	private agentResultDirectory = path.join(getAgentStorageDirectory(), "results");
 
 	constructor(
 		private readonly pi: ExtensionAPI,
@@ -268,9 +311,11 @@ export class AgentControl {
 
 	private migrateStoredFile(file: string | undefined, directory: string): { path: string | undefined; migrated: boolean } {
 		if (!file) return { path: undefined, migrated: false };
-		const source = path.resolve(file);
+		const original = path.resolve(file);
+		const source = resolveMigratedStoragePath(original);
+		const translated = source !== original;
 		const destinationDirectory = path.resolve(directory);
-		if (path.dirname(source) === destinationDirectory) return { path: source, migrated: false };
+		if (path.dirname(source) === destinationDirectory) return { path: source, migrated: translated };
 		const target = path.join(destinationDirectory, path.basename(source));
 		try {
 			fs.mkdirSync(destinationDirectory, { recursive: true });
@@ -326,7 +371,8 @@ export class AgentControl {
 			}
 			if (owner.version !== 1 || typeof owner.rootSessionId !== "string") continue;
 			if (owner.rootSessionId === currentSessionId) continue;
-			if (owner.rootSessionFile && fs.existsSync(owner.rootSessionFile)) continue;
+			// Missing ownership evidence is not proof of an orphan.
+			if (!owner.rootSessionFile || fs.existsSync(owner.rootSessionFile)) continue;
 			try {
 				fs.rmSync(directory, { recursive: true, force: true });
 				removed++;
@@ -547,7 +593,7 @@ export class AgentControl {
 	private async resolveModel(ctx: ExtensionContext, requested?: string): Promise<Model<any>> {
 		const value = requested?.trim();
 		if (!value) {
-			throw new Error("no sub-agent model configured; set a task model, Role model, or defaultModel in agents-setting.json");
+			throw new Error("no sub-agent model configured; set a task model, Role model, or defaultModel in pi-agents/settings.json");
 		}
 		const runtime = await this.getModelRuntime(ctx);
 		const slash = value.indexOf("/");
@@ -823,6 +869,26 @@ export class AgentControl {
 		return prepared;
 	}
 
+	private persistQueuedSession(sessionManager: SessionManager): string {
+		const sessionFile = sessionManager.getSessionFile();
+		const header = sessionManager.getHeader();
+		if (!sessionFile || !header) throw new Error("failed to initialize a persisted sub-agent session");
+		fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+		const entries = [header, ...sessionManager.getEntries()];
+		const descriptor = fs.openSync(sessionFile, "wx");
+		let completed = false;
+		try {
+			fs.writeFileSync(descriptor, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
+			fs.fsyncSync(descriptor);
+			completed = true;
+		} finally {
+			try { fs.closeSync(descriptor); } finally {
+				if (!completed) fs.rmSync(sessionFile, { force: true });
+			}
+		}
+		return sessionFile;
+	}
+
 	private materializeQueuedBatch(ctx: ExtensionContext, prepared: PreparedSpawn[]): AgentRecord[] {
 		const records: AgentRecord[] = [];
 		const baseTime = Date.now();
@@ -858,15 +924,15 @@ export class AgentControl {
 						payload: item.request.message,
 					}),
 				};
-				record.sessionFile = sessionManager.getSessionFile();
 				records.push(record);
-				if (!record.sessionFile) throw new Error(`failed to create persisted session for ${record.path}`);
 				sessionManager.appendCustomEntry(CHILD_META_ENTRY_TYPE, {
 					path: record.path,
 					parentPath: record.parentPath,
+					rootSessionId: this.root!.sessionId,
 					role: record.role,
 				});
 				sessionManager.appendCustomEntry(FORK_CONTEXT_ENTRY_TYPE, { messages: item.forkMessages });
+				record.sessionFile = this.persistQueuedSession(sessionManager);
 			}
 		} catch (error) {
 			for (const record of records) {
@@ -1098,6 +1164,44 @@ export class AgentControl {
 		return this.view(record);
 	}
 
+	getUsage(ctx: ExtensionContext): AgentUsageReport {
+		this.callerPath(ctx);
+		const main = sessionUsage(ctx.sessionManager);
+		const subagents = emptyUsageTotals();
+		let unreadableSubagents = 0;
+		const countedSessionIds = new Set<string>();
+		for (const record of this.agentsByPath.values()) {
+			try {
+				const liveManager = record.session?.sessionManager;
+				const storedFile = record.sessionFile ? resolveMigratedStoragePath(record.sessionFile) : undefined;
+				if (!liveManager && (!storedFile || !fs.existsSync(storedFile))) {
+					unreadableSubagents++;
+					continue;
+				}
+				const manager = liveManager ?? SessionManager.open(storedFile!);
+				const sessionId = manager.getSessionId();
+				if (countedSessionIds.has(sessionId)) continue;
+				countedSessionIds.add(sessionId);
+				addUsageTotals(subagents, sessionUsage(manager));
+			} catch {
+				unreadableSubagents++;
+			}
+		}
+		const combined = emptyUsageTotals();
+		addUsageTotals(combined, main);
+		addUsageTotals(combined, subagents);
+		main.cost = normalizeCost(main.cost);
+		subagents.cost = normalizeCost(subagents.cost);
+		combined.cost = normalizeCost(combined.cost);
+		return {
+			main,
+			subagents,
+			combined,
+			subagentCount: this.agentsByPath.size,
+			unreadableSubagents,
+		};
+	}
+
 	list(ctx: ExtensionContext, prefix?: string, includeResults = false): AgentView[] {
 		const callerPath = this.callerPath(ctx);
 		const resolvedPrefix = prefix?.trim() ? this.resolveReference(callerPath, prefix) : undefined;
@@ -1284,7 +1388,29 @@ export class AgentControl {
 		if (!record.sessionFile) throw new Error(`agent ${record.path} has no persisted session file`);
 		if (!this.root) throw new Error("root session is not bound");
 		await this.evictForResidency(record.path);
-		const sessionManager = SessionManager.open(record.sessionFile);
+		const migratedSessionFile = resolveMigratedStoragePath(record.sessionFile);
+		if (migratedSessionFile !== record.sessionFile) {
+			record.sessionFile = migratedSessionFile;
+			this.persistState();
+		}
+		let sessionManager: SessionManager;
+		if (fs.existsSync(record.sessionFile)) {
+			sessionManager = SessionManager.open(record.sessionFile);
+		} else {
+			// Older queue releases persisted only a future path. Recreate a durable
+			// session with the recorded identity; its lost fork context is unrecoverable.
+			sessionManager = SessionManager.create(this.root.cwd, this.childSessionDirectory, { id: record.id });
+			sessionManager.appendCustomEntry(CHILD_META_ENTRY_TYPE, {
+				path: record.path,
+				parentPath: record.parentPath,
+				rootSessionId: this.root.sessionId,
+				role: record.role,
+			});
+			sessionManager.appendCustomEntry(FORK_CONTEXT_ENTRY_TYPE, { messages: [] });
+			record.sessionFile = this.persistQueuedSession(sessionManager);
+			this.persistState();
+			sessionManager = SessionManager.open(record.sessionFile);
+		}
 		const forkContext = this.forkContextFromSessionManager(sessionManager);
 		const role = resolveRole(this.root.cwd, this.root.ctx.isProjectTrusted(), record.role);
 		const settingsManager = SettingsManager.create(this.root.cwd, getAgentDir());

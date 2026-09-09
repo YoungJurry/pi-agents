@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0 - 2026-09-09
+
+- Add `/agent-usage`, a read-only overlay that reports separate main/sub-agent token and cache totals plus combined tokens and cost without modifying root context.
+- Move package-owned storage from `~/.pi/agent/codex-agents/` to `~/.pi/agent/pi-agents/` and rename `agents-setting.json` to `settings.json` with collision-safe automatic migration.
+- Archive legacy flat session/result files only after scanning every ordinary Pi main session and confirming that no persisted agent state references their IDs.
+- Durably initialize queued child JSONL files before returning from batch spawn, preserving the original Session ID, child ownership metadata, and fork context across queueing and process restarts.
+- Repair missing queued-session files from affected older releases with their persisted IDs; already-lost historical fork context cannot be reconstructed.
+- Record the owning root Session ID directly in newly created child metadata.
+
 ## 0.7.5 - 2026-09-05
 
 - Exclude the active `wait_agent` caller from its folded child-status summary.

@@ -6,7 +6,10 @@ import {
 	getSupportedThinkingLevels,
 	type Model,
 } from "@earendil-works/pi-ai";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import {
+	getAgentSettingsPath as getCurrentAgentSettingsPath,
+	getLegacyAgentSettingsPaths,
+} from "./storage.ts";
 
 export const DEFAULT_MAX_CONCURRENT_SUBAGENTS = 3;
 export const DEFAULT_MAX_RESIDENT_SUBAGENTS = 3;
@@ -26,7 +29,7 @@ export interface AgentLimits {
 }
 
 export function getAgentSettingsPath(): string {
-	return path.join(getAgentDir(), "codex-agents", "agents-setting.json");
+	return getCurrentAgentSettingsPath();
 }
 
 export function selectAgentModel(...candidates: Array<string | undefined>): string | undefined {
@@ -53,30 +56,34 @@ export function selectAgentThinkingLevel(
 }
 
 export function loadAgentSettings(filePath = getAgentSettingsPath()): AgentSettings {
-	if (!fs.existsSync(filePath)) return {};
+	let resolvedPath = filePath;
+	if (!fs.existsSync(resolvedPath) && path.resolve(filePath) === path.resolve(getAgentSettingsPath())) {
+		resolvedPath = getLegacyAgentSettingsPaths().find((candidate) => fs.existsSync(candidate)) ?? resolvedPath;
+	}
+	if (!fs.existsSync(resolvedPath)) return {};
 
 	let value: unknown;
 	try {
-		value = JSON.parse(fs.readFileSync(filePath, "utf8"));
+		value = JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`failed to read agent settings at ${filePath}: ${message}`);
+		throw new Error(`failed to read agent settings at ${resolvedPath}: ${message}`);
 	}
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
-		throw new Error(`agent settings at ${filePath} must contain a JSON object`);
+		throw new Error(`agent settings at ${resolvedPath} must contain a JSON object`);
 	}
 
 	const raw = value as Record<string, unknown>;
 	const settings: AgentSettings = {};
 	if (raw.defaultModel !== undefined) {
 		if (typeof raw.defaultModel !== "string" || !raw.defaultModel.trim()) {
-			throw new Error(`defaultModel in ${filePath} must be a non-empty provider/model string`);
+			throw new Error(`defaultModel in ${resolvedPath} must be a non-empty provider/model string`);
 		}
 		settings.defaultModel = raw.defaultModel.trim();
 	}
 	if (raw.defaultThinkingLevel !== undefined) {
 		if (typeof raw.defaultThinkingLevel !== "string" || !CHILD_THINKING_LEVELS.includes(raw.defaultThinkingLevel as ThinkingLevel)) {
-			throw new Error(`defaultThinkingLevel in ${filePath} must be one of: ${CHILD_THINKING_LEVELS.join(", ")}`);
+			throw new Error(`defaultThinkingLevel in ${resolvedPath} must be one of: ${CHILD_THINKING_LEVELS.join(", ")}`);
 		}
 		settings.defaultThinkingLevel = raw.defaultThinkingLevel as ThinkingLevel;
 	}
@@ -84,7 +91,7 @@ export function loadAgentSettings(filePath = getAgentSettingsPath()): AgentSetti
 		const limit = raw[key];
 		if (limit === undefined) continue;
 		if (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1) {
-			throw new Error(`${key} in ${filePath} must be a positive integer`);
+			throw new Error(`${key} in ${resolvedPath} must be a positive integer`);
 		}
 		settings[key] = limit;
 	}
