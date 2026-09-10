@@ -189,10 +189,8 @@ The settings file is optional, but spawning requires a model from either the tas
 - Child sessions persist under `~/.pi/agent/pi-agents/roots/<root-session-id>/sessions/` and reload lazily
 - Full final answers persist under `~/.pi/agent/pi-agents/roots/<root-session-id>/results/`
 - Each root storage group records its owning main-session file in `owner.json`
-- The former `~/.pi/agent/codex-agents/` directory and `agents-setting.json` filename migrate automatically without overwriting newer files
+- The extension reads and writes only `~/.pi/agent/pi-agents/` and `settings.json`; it contains no automatic legacy migration, archival, or deletion logic
 - Resuming an existing main session removes groups whose owning main-session file has been deleted; new sessions and `/reload` do not trigger grouped cleanup
-- Referenced legacy flat child files are migrated when their main session is resumed
-- The extension never automatically archives or deletes legacy flat files
 - Parents receive a compact completion notice instead of the full answer; use `list_agents(view="results")` or read the result file on demand
 - Notices to a busy agent are queued safely: `wait_agent` returns them in its own result, and any leftovers are delivered right after a successful recipient turn
 - `wait_agent` sends only newly queued mailbox notices to the model; its child status tree excludes the active caller, is folded in the TUI by default, and can be toggled with `Ctrl+O`
@@ -207,3 +205,109 @@ The settings file is optional, but spawning requires a model from either the tas
 - All agents share the same cwd and filesystem
 
 Use `/agents` to browse the tree and inspect read-only child transcripts. A compact live tree appears below the editor while child agents exist and shows each active agent's `provider/model` identifier and effective thinking level.
+
+## Manual migration from versions before 0.10.0
+
+Version 0.10.0 removes all runtime compatibility code for the former `codex-agents` names. Existing users who cannot see an old Agent tree, or who still have `~/.pi/agent/codex-agents/` or `agents-setting.json`, should **close every Pi process first** and run the following command once. It renames the storage/settings paths and updates the old custom-entry identifiers and persisted file paths in main and child session JSONL files. It refuses to merge conflicting old and new paths automatically.
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+import json
+import os
+import stat
+
+agent_dir = Path.home() / ".pi" / "agent"
+old_root = agent_dir / "codex-agents"
+new_root = agent_dir / "pi-agents"
+
+if old_root.exists():
+    if new_root.exists():
+        raise SystemExit(
+            f"Refusing to merge because both {old_root} and {new_root} exist. "
+            "Back them up and reconcile them manually first."
+        )
+    old_root.rename(new_root)
+
+old_settings = new_root / "agents-setting.json"
+new_settings = new_root / "settings.json"
+if old_settings.exists():
+    if new_settings.exists():
+        raise SystemExit(
+            f"Refusing to overwrite {new_settings}; reconcile it with {old_settings} manually."
+        )
+    old_settings.rename(new_settings)
+
+custom_types = {
+    "codex-agents": "pi-agents",
+    "codex-agents-state": "pi-agents-state",
+    "codex-agents-child-meta": "pi-agents-child-meta",
+    "codex-agents-fork-context": "pi-agents-fork-context",
+}
+old_prefix = str(old_root)
+new_prefix = str(new_root)
+
+
+def migrate(value):
+    changed = False
+    if isinstance(value, dict):
+        output = {}
+        for key, child in value.items():
+            if key == "customType" and isinstance(child, str) and child in custom_types:
+                output[key] = custom_types[child]
+                changed = True
+            elif key in {"sessionFile", "resultFile"} and isinstance(child, str) and (
+                child == old_prefix or child.startswith(old_prefix + os.sep)
+            ):
+                output[key] = new_prefix + child[len(old_prefix):]
+                changed = True
+            else:
+                output[key], child_changed = migrate(child)
+                changed |= child_changed
+        return output, changed
+    if isinstance(value, list):
+        output = []
+        for child in value:
+            migrated, child_changed = migrate(child)
+            output.append(migrated)
+            changed |= child_changed
+        return output, changed
+    return value, False
+
+files = set((agent_dir / "sessions").rglob("*.jsonl"))
+if new_root.exists():
+    files.update(new_root.rglob("*.jsonl"))
+
+changed_files = 0
+for file in sorted(files):
+    temporary = file.with_name(file.name + ".pi-agents-migrate")
+    touched = False
+    try:
+        with file.open("r", encoding="utf-8") as source, temporary.open("w", encoding="utf-8") as target:
+            for line in source:
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    target.write(line)
+                    continue
+                value, line_changed = migrate(value)
+                target.write(
+                    json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n"
+                    if line_changed else line
+                )
+                touched |= line_changed
+        if touched:
+            os.chmod(temporary, stat.S_IMODE(file.stat().st_mode))
+            os.replace(temporary, file)
+            changed_files += 1
+        else:
+            temporary.unlink()
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+print(f"Migration complete: updated {changed_files} JSONL file(s). Restart Pi or run /reload.")
+PY
+```
+
+Fresh installations do not need this command.

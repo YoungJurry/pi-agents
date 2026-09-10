@@ -12,7 +12,7 @@ function createControl(sendMessage: (message: SentMessage["message"], options: S
 	const pi = {
 		sendMessage,
 	} as any;
-	return new AgentControl(pi, "/tmp/codex-agents/index.ts");
+	return new AgentControl(pi, "/tmp/pi-agents/index.ts");
 }
 
 async function settle(): Promise<void> {

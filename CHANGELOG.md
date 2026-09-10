@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0 - 2026-09-10
+
+- Remove all automatic compatibility, path translation, and file-moving logic for legacy Agent storage.
+- Standardize storage, settings, custom-entry identifiers, widget keys, and status keys on the `pi-agents` name.
+- Document an explicit, collision-safe one-time command for users who need to migrate pre-0.10.0 sessions manually.
+- Keep fresh installations free of redundant legacy checks and writes.
+
 ## 0.9.0 - 2026-09-10
 
 - Render `/agent-usage` directly in the normal TUI transcript through Pi's TUI-only custom-entry API instead of opening an overlay.

@@ -2,10 +2,10 @@ import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core"
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
-export const EXTENSION_ID = "codex-agents";
-export const STATE_ENTRY_TYPE = "codex-agents-state";
-export const CHILD_META_ENTRY_TYPE = "codex-agents-child-meta";
-export const FORK_CONTEXT_ENTRY_TYPE = "codex-agents-fork-context";
+export const EXTENSION_ID = "pi-agents";
+export const STATE_ENTRY_TYPE = "pi-agents-state";
+export const CHILD_META_ENTRY_TYPE = "pi-agents-child-meta";
+export const FORK_CONTEXT_ENTRY_TYPE = "pi-agents-fork-context";
 export const USAGE_ENTRY_TYPE = "pi-agents-usage";
 export const ROOT_PATH = "/root";
 export const DIRECT_AGENT_TOOL_NAMES = [

@@ -5,7 +5,6 @@ import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { AgentControl } from "./control.ts";
 import { getAgentSettingsPath, loadAgentSettings, resolveAgentLimits } from "./settings.ts";
 import { createCollaborationTools } from "./tools.ts";
-import { migrateLegacyAgentStorage } from "./storage.ts";
 import {
 	EXTENSION_ID,
 	ROOT_PATH,
@@ -17,8 +16,8 @@ import {
 import { AgentPickerComponent, AgentTranscriptViewer, formatAgentUsage, renderAgentUsage } from "./viewer.ts";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
-const WIDGET_KEY = "codex-agents-tree";
-const STATUS_KEY = "codex-agents";
+const WIDGET_KEY = "pi-agents-tree";
+const STATUS_KEY = "pi-agents";
 const PROMPT_MARKER = "<multi_agent_role>";
 
 function statusIcon(status: AgentLifecycleStatus): string {
@@ -92,8 +91,7 @@ class AgentTreeWidget {
 	invalidate(): void {}
 }
 
-export default function codexAgentsExtension(pi: ExtensionAPI): void {
-	const storageMigration = migrateLegacyAgentStorage();
+export default function piAgentsExtension(pi: ExtensionAPI): void {
 	const limits = resolveAgentLimits(loadAgentSettings(), getAgentSettingsPath());
 	const control = new AgentControl(
 		pi,
@@ -107,7 +105,6 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 
 	let activeContext: ExtensionContext | undefined;
 	let widgetTui: { requestRender(): void } | undefined;
-	let storageMigrationReported = false;
 
 	const updateUi = () => {
 		const ctx = activeContext;
@@ -134,13 +131,6 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", (event, ctx) => {
 		activeContext = ctx;
 		control.bindRoot(ctx);
-		if (!storageMigrationReported) {
-			storageMigrationReported = true;
-			if (storageMigration.movedEntries > 0) {
-				ctx.ui.notify(`Migrated agent storage to ~/.pi/agent/pi-agents (${storageMigration.movedEntries} entries).`, "info");
-			}
-			for (const warning of storageMigration.warnings) ctx.ui.notify(`Agent storage migration: ${warning}`, "warning");
-		}
 		const resumedExistingSession = event.reason === "resume"
 			|| (event.reason === "startup" && ctx.sessionManager.getEntries().some((entry) => entry.type === "message"));
 		if (resumedExistingSession) {

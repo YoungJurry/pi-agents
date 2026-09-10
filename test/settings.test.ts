@@ -12,8 +12,8 @@ import {
 } from "../settings.ts";
 
 function withTempFile(contents?: string): { directory: string; file: string } {
-	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-agents-settings-"));
-	const file = path.join(directory, "agents-setting.json");
+	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agents-settings-"));
+	const file = path.join(directory, "settings.json");
 	if (contents !== undefined) fs.writeFileSync(file, contents, "utf8");
 	return { directory, file };
 }

@@ -56,7 +56,7 @@ import {
 	type PersistedTreeState,
 	type RootBinding,
 } from "./types.ts";
-import { getAgentStorageDirectory, resolveMigratedStoragePath } from "./storage.ts";
+import { getAgentStorageDirectory } from "./storage.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const MIN_WAIT_TIMEOUT_MS = 10_000;
@@ -362,28 +362,6 @@ export class AgentControl {
 			},
 		}) as ExtensionUIContext;
 		session.extensionRunner.setUIContext(proxiedUi, root.ctx.mode);
-	}
-
-	private migrateStoredFile(file: string | undefined, directory: string): { path: string | undefined; migrated: boolean } {
-		if (!file) return { path: undefined, migrated: false };
-		const original = path.resolve(file);
-		const source = resolveMigratedStoragePath(original);
-		const translated = source !== original;
-		const destinationDirectory = path.resolve(directory);
-		if (path.dirname(source) === destinationDirectory) return { path: source, migrated: translated };
-		const target = path.join(destinationDirectory, path.basename(source));
-		try {
-			fs.mkdirSync(destinationDirectory, { recursive: true });
-			if (fs.existsSync(source)) {
-				if (fs.existsSync(target)) throw new Error(`agent storage migration target already exists: ${target}`);
-				fs.renameSync(source, target);
-				return { path: target, migrated: true };
-			}
-			if (fs.existsSync(target)) return { path: target, migrated: true };
-		} catch {
-			// Keep the original path and fail safely during lazy loading if it becomes unavailable.
-		}
-		return { path: source, migrated: false };
 	}
 
 	private configureRootStorage(ctx: ExtensionContext, sessionId: string): void {
@@ -1230,7 +1208,7 @@ export class AgentControl {
 		for (const record of this.agentsByPath.values()) {
 			try {
 				const liveManager = record.session?.sessionManager;
-				const storedFile = record.sessionFile ? resolveMigratedStoragePath(record.sessionFile) : undefined;
+				const storedFile = record.sessionFile;
 				if (!liveManager && (!storedFile || !fs.existsSync(storedFile))) {
 					unreadableSubagents++;
 					continue;
@@ -1398,20 +1376,14 @@ export class AgentControl {
 			if (entry.type === "custom" && entry.customType === STATE_ENTRY_TYPE && isPersistedState(entry.data)) latest = entry.data;
 		}
 		if (!latest || latest.rootSessionId !== ctx.sessionManager.getSessionId()) return;
-		let migratedAnyFile = false;
 		for (const persisted of latest.agents) {
 			const status: AgentLifecycleStatus = persisted.status === "queued" || (persisted.status === "pending_init" && Boolean(persisted.queuedMessage))
 				? "queued"
 				: persisted.status === "running" || persisted.status === "pending_init"
 					? "interrupted"
 					: persisted.status;
-			const migratedSession = this.migrateStoredFile(persisted.sessionFile, this.childSessionDirectory);
-			const migratedResult = this.migrateStoredFile(persisted.resultFile, this.agentResultDirectory);
-			migratedAnyFile ||= migratedSession.migrated || migratedResult.migrated;
 			const record: AgentRecord = {
 				...persisted,
-				sessionFile: migratedSession.path,
-				resultFile: migratedResult.path,
 				status,
 				statusMessage: status === "queued"
 					? "waiting for an execution slot"
@@ -1426,7 +1398,6 @@ export class AgentControl {
 			this.pathBySessionId.set(record.id, record.path);
 			if (record.nickname) this.usedNicknames.add(record.nickname);
 		}
-		if (migratedAnyFile) this.persistState();
 	}
 
 	private forkContextFromSessionManager(sessionManager: SessionManager): AgentMessage[] {
@@ -1449,29 +1420,10 @@ export class AgentControl {
 		if (!record.sessionFile) throw new Error(`agent ${record.path} has no persisted session file`);
 		if (!this.root) throw new Error("root session is not bound");
 		await this.evictForResidency(record.path);
-		const migratedSessionFile = resolveMigratedStoragePath(record.sessionFile);
-		if (migratedSessionFile !== record.sessionFile) {
-			record.sessionFile = migratedSessionFile;
-			this.persistState();
+		if (!fs.existsSync(record.sessionFile)) {
+			throw new Error(`agent ${record.path} session file does not exist: ${record.sessionFile}`);
 		}
-		let sessionManager: SessionManager;
-		if (fs.existsSync(record.sessionFile)) {
-			sessionManager = SessionManager.open(record.sessionFile);
-		} else {
-			// Older queue releases persisted only a future path. Recreate a durable
-			// session with the recorded identity; its lost fork context is unrecoverable.
-			sessionManager = SessionManager.create(this.root.cwd, this.childSessionDirectory, { id: record.id });
-			sessionManager.appendCustomEntry(CHILD_META_ENTRY_TYPE, {
-				path: record.path,
-				parentPath: record.parentPath,
-				rootSessionId: this.root.sessionId,
-				role: record.role,
-			});
-			sessionManager.appendCustomEntry(FORK_CONTEXT_ENTRY_TYPE, { messages: [] });
-			record.sessionFile = this.persistQueuedSession(sessionManager);
-			this.persistState();
-			sessionManager = SessionManager.open(record.sessionFile);
-		}
+		const sessionManager = SessionManager.open(record.sessionFile);
 		const forkContext = this.forkContextFromSessionManager(sessionManager);
 		const role = resolveRole(this.root.cwd, this.root.ctx.isProjectTrusted(), record.role);
 		const settingsManager = SettingsManager.create(this.root.cwd, getAgentDir());
