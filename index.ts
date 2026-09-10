@@ -6,8 +6,15 @@ import { AgentControl } from "./control.ts";
 import { getAgentSettingsPath, loadAgentSettings, resolveAgentLimits } from "./settings.ts";
 import { createCollaborationTools } from "./tools.ts";
 import { migrateLegacyAgentStorage } from "./storage.ts";
-import { EXTENSION_ID, ROOT_PATH, type AgentLifecycleStatus, type AgentView } from "./types.ts";
-import { AgentPickerComponent, AgentTranscriptViewer, AgentUsageViewer, formatAgentUsage } from "./viewer.ts";
+import {
+	EXTENSION_ID,
+	ROOT_PATH,
+	USAGE_ENTRY_TYPE,
+	type AgentLifecycleStatus,
+	type AgentUsageReport,
+	type AgentView,
+} from "./types.ts";
+import { AgentPickerComponent, AgentTranscriptViewer, formatAgentUsage, renderAgentUsage } from "./viewer.ts";
 
 const SELF_PATH = fileURLToPath(import.meta.url);
 const WIDGET_KEY = "codex-agents-tree";
@@ -209,32 +216,25 @@ export default function codexAgentsExtension(pi: ExtensionAPI): void {
 		return new Text(`${header}\n${theme.fg("customMessageText", body)}`, 1, 0);
 	});
 
+	pi.registerEntryRenderer<AgentUsageReport>(USAGE_ENTRY_TYPE, (entry, _options, theme) => {
+		return entry.data ? renderAgentUsage(entry.data, theme) : undefined;
+	});
+
 	pi.registerCommand("agent-usage", {
-		description: "Show main, sub-agent, and combined token usage",
+		description: "Show detailed main and sub-agent token usage by model",
 		handler: async (_args, ctx) => {
 			activeContext = ctx;
-			let report;
+			let report: AgentUsageReport;
 			try {
 				report = control.getUsage(ctx);
 			} catch (error) {
 				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 				return;
 			}
-			if (ctx.mode !== "tui") {
+			if (ctx.mode === "tui") {
+				pi.appendEntry(USAGE_ENTRY_TYPE, report);
+			} else {
 				ctx.ui.notify(formatAgentUsage(report), "info");
-				return;
-			}
-			const releaseUserOverlay = control.beginUserOverlay();
-			try {
-				await ctx.ui.custom<void>(
-					(_tui, theme, keybindings, done) => new AgentUsageViewer(theme, keybindings, report, done),
-					{
-						overlay: true,
-						overlayOptions: { anchor: "center", width: "62%", maxHeight: "70%", margin: 1 },
-					},
-				);
-			} finally {
-				releaseUserOverlay();
 			}
 		},
 	});

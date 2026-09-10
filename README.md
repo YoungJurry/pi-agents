@@ -64,7 +64,9 @@ Pi's built-in `/session` remains the authoritative view of the main Agent and it
 /agent-usage
 ```
 
-The read-only overlay reports main and child token totals, separate cache hit rates, combined tokens/cost, and any unreadable child sessions. It reads persisted child JSONL files without loading or waking their AgentSessions, does not add a main-session message, and does not alter provider-facing context. Pi currently has no extension hook that can add child tokens to built-in `/session` while excluding them from that command's cache statistics.
+The command writes a detailed report directly into the normal TUI transcript, like `/session`; it does not open an overlay. The report includes main, sub-agent, and combined input/output/cache/token/cost totals, followed by separate main-model and sub-agent-model breakdowns. Each model row shows its tokens, prompt/output/cache details, number of contributing Agent sessions, and number of usage records. Non-model tool and summary usage is kept in an explicit `Tools/summaries` bucket rather than being misattributed to a model.
+
+The report is stored as a TUI-only custom entry so it remains outside LLM context and does not affect `/session` message or token accounting. Reading the report does not load or wake child AgentSessions. Pi currently has no extension hook that can add child tokens to built-in `/session` while excluding them from that command's cache statistics.
 
 ## Tools
 

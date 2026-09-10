@@ -20,6 +20,7 @@ import {
 import {
 	ROOT_PATH,
 	type AgentTranscriptView,
+	type AgentUsageBreakdownEntry,
 	type AgentUsageReport,
 	type AgentUsageTotals,
 	type AgentView,
@@ -88,66 +89,65 @@ function usageCacheRate(usage: AgentUsageTotals): string {
 	return prompt > 0 ? `${((usage.cacheRead / prompt) * 100).toFixed(1)}%` : "n/a";
 }
 
+function usageLine(label: string, usage: AgentUsageTotals): string {
+	const parts = [
+		`${label}: ${usage.total.toLocaleString()} tokens`,
+		`input ${usagePromptTokens(usage).toLocaleString()}`,
+		`output ${usage.output.toLocaleString()}`,
+		`cached ${usage.cacheRead.toLocaleString()} (${usageCacheRate(usage)})`,
+	];
+	if (usage.cacheWrite > 0) parts.push(`cache write ${usage.cacheWrite.toLocaleString()}`);
+	if (usage.cost > 0) parts.push(`$${usage.cost.toFixed(3)}`);
+	return parts.join(" · ");
+}
+
+function breakdownLines(
+	title: string,
+	items: AgentUsageBreakdownEntry[],
+	sessionLabel: string,
+): string[] {
+	const lines = [title];
+	if (items.length === 0) {
+		lines.push("  (no billed usage)");
+		return lines;
+	}
+	for (const item of items) {
+		const sessions = `${item.sessionCount.toLocaleString()} ${sessionLabel}${item.sessionCount === 1 ? "" : "s"}`;
+		const operations = `${item.operations.toLocaleString()} usage record${item.operations === 1 ? "" : "s"}`;
+		lines.push(`  ${item.key}`);
+		lines.push(`    ${usageLine("Usage", item.usage)} · ${sessions} · ${operations}`);
+	}
+	return lines;
+}
+
 export function formatAgentUsage(report: AgentUsageReport): string {
+	const counted = report.subagentCount - report.unreadableSubagents;
 	const lines = [
 		"Agent Usage",
 		"",
-		`Main agent:  ${report.main.total.toLocaleString()} tokens · cache ${usageCacheRate(report.main)}`,
-		`Sub-agents:  ${report.subagents.total.toLocaleString()} tokens · cache ${usageCacheRate(report.subagents)}`,
-		`Combined:    ${report.combined.total.toLocaleString()} tokens`,
+		"Totals",
+		`  ${usageLine("Main agent", report.main)}`,
+		`  ${usageLine("Sub-agents", report.subagents)}`,
+		`  ${usageLine("Combined", report.combined)}`,
+		`  Sub-agent sessions: ${counted.toLocaleString()}/${report.subagentCount.toLocaleString()} readable`,
 		"",
-		`Sub-agents counted: ${report.subagentCount - report.unreadableSubagents}/${report.subagentCount}`,
+		...breakdownLines("Main-agent models", report.mainBreakdown, "session"),
+		"",
+		...breakdownLines("Sub-agent models", report.subagentBreakdown, "agent"),
 	];
-	if (report.combined.cost > 0) lines.push(`Combined cost: $${report.combined.cost.toFixed(3)}`);
-	if (report.unreadableSubagents > 0) lines.push(`Unreadable sessions: ${report.unreadableSubagents}`);
+	if (report.unreadableSubagents > 0) lines.push("", `Unreadable sub-agent sessions: ${report.unreadableSubagents.toLocaleString()}`);
 	return lines.join("\n");
 }
 
-export class AgentUsageViewer {
-	constructor(
-		private readonly theme: Theme,
-		private readonly keybindings: KeybindingsManager,
-		private readonly report: AgentUsageReport,
-		private readonly done: () => void,
-	) {}
-
-	handleInput(data: string): void {
-		if (this.keybindings.matches(data, "tui.select.cancel") || this.keybindings.matches(data, "tui.select.confirm")) {
-			this.done();
-		}
-	}
-
-	render(width: number): string[] {
-		const innerWidth = Math.max(1, width - 2);
-		const row = (label: string, usage: AgentUsageTotals, includeCache: boolean): string => {
-			const cache = includeCache ? ` · cache ${usageCacheRate(usage)}` : "";
-			return ` ${this.theme.fg("dim", `${label}:`)} ${usage.total.toLocaleString()} tokens${cache}`;
-		};
-		const lines = [
-			framedRule(this.theme, innerWidth, "╭", "╮"),
-			framedRow(this.theme, ` ${this.theme.fg("accent", this.theme.bold("Agent Usage"))}`, innerWidth),
-			framedRule(this.theme, innerWidth, "├", "┤"),
-			framedRow(this.theme, row("Main agent", this.report.main, true), innerWidth),
-			framedRow(this.theme, row("Sub-agents", this.report.subagents, true), innerWidth),
-			framedRow(this.theme, row("Combined", this.report.combined, false), innerWidth),
-			framedRow(this.theme, "", innerWidth),
-			framedRow(this.theme, ` ${this.theme.fg("dim", "Sub-agents counted:")} ${this.report.subagentCount - this.report.unreadableSubagents}/${this.report.subagentCount}`, innerWidth),
-		];
-		if (this.report.combined.cost > 0) {
-			lines.push(framedRow(this.theme, ` ${this.theme.fg("dim", "Combined cost:")} $${this.report.combined.cost.toFixed(3)}`, innerWidth));
-		}
-		if (this.report.unreadableSubagents > 0) {
-			lines.push(framedRow(this.theme, ` ${this.theme.fg("warning", `Unreadable sessions: ${this.report.unreadableSubagents}`)}`, innerWidth));
-		}
-		lines.push(
-			framedRule(this.theme, innerWidth, "├", "┤"),
-			framedRow(this.theme, ` ${this.theme.fg("dim", "Enter / Esc close")}`, innerWidth),
-			framedRule(this.theme, innerWidth, "╰", "╯"),
-		);
-		return lines;
-	}
-
-	invalidate(): void {}
+export function renderAgentUsage(report: AgentUsageReport, theme: Theme): Text {
+	const headings = new Set(["Agent Usage", "Totals", "Main-agent models", "Sub-agent models"]);
+	const rendered = formatAgentUsage(report)
+		.split("\n")
+		.map((line) => headings.has(line)
+			? (line === "Agent Usage" ? theme.bold(line) : theme.bold(theme.fg("accent", line)))
+			: line.startsWith("Unreadable ") ? theme.fg("warning", line) : line)
+		.join("\n");
+	return new Text(rendered, 1, 0);
 }
 
 export class AgentPickerComponent {

@@ -47,6 +47,7 @@ import {
 	type AgentRole,
 	type AgentRoleView,
 	type AgentTranscriptView,
+	type AgentUsageBreakdownEntry,
 	type AgentUsageReport,
 	type AgentUsageTotals,
 	type AgentView,
@@ -126,21 +127,75 @@ function addUsageTotals(target: AgentUsageTotals, source: AgentUsageTotals): voi
 	target.cost += source.cost;
 }
 
-function sessionUsage(sessionManager: Pick<SessionManager, "getEntries">): AgentUsageTotals {
+interface SessionUsageDetails {
+	totals: AgentUsageTotals;
+	breakdown: Map<string, AgentUsageBreakdownEntry>;
+}
+
+function addAttributedUsage(
+	breakdown: Map<string, AgentUsageBreakdownEntry>,
+	key: string,
+	usage: Usage,
+): void {
+	let item = breakdown.get(key);
+	if (!item) {
+		item = { key, usage: emptyUsageTotals(), sessionCount: 1, operations: 0 };
+		breakdown.set(key, item);
+	}
+	addUsage(item.usage, usage);
+	item.operations++;
+}
+
+function sessionUsageDetails(sessionManager: Pick<SessionManager, "getEntries">): SessionUsageDetails {
 	const totals = emptyUsageTotals();
+	const breakdown = new Map<string, AgentUsageBreakdownEntry>();
 	for (const entry of sessionManager.getEntries()) {
 		if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
 			addUsage(totals, entry.usage);
+			addAttributedUsage(breakdown, "Tools/summaries", entry.usage);
 		}
 		if (entry.type !== "message") continue;
 		const message = entry.message;
-		if (message.role === "assistant" || message.role === "toolResult") addUsage(totals, message.usage);
+		if (message.role === "assistant") {
+			addUsage(totals, message.usage);
+			const responseModel = (message as typeof message & { responseModel?: string }).responseModel;
+			addAttributedUsage(breakdown, `${message.provider}/${responseModel ?? message.model}`, message.usage);
+		} else if (message.role === "toolResult" && message.usage) {
+			addUsage(totals, message.usage);
+			addAttributedUsage(breakdown, "Tools/summaries", message.usage);
+		}
 	}
-	return totals;
+	return { totals, breakdown };
+}
+
+function mergeUsageBreakdown(
+	target: Map<string, AgentUsageBreakdownEntry>,
+	source: Map<string, AgentUsageBreakdownEntry>,
+): void {
+	for (const item of source.values()) {
+		let aggregate = target.get(item.key);
+		if (!aggregate) {
+			aggregate = { key: item.key, usage: emptyUsageTotals(), sessionCount: 0, operations: 0 };
+			target.set(item.key, aggregate);
+		}
+		addUsageTotals(aggregate.usage, item.usage);
+		aggregate.sessionCount += item.sessionCount;
+		aggregate.operations += item.operations;
+	}
 }
 
 function normalizeCost(value: number): number {
 	return Math.round(value * 1_000_000_000) / 1_000_000_000;
+}
+
+function finalizeBreakdown(breakdown: Map<string, AgentUsageBreakdownEntry>): AgentUsageBreakdownEntry[] {
+	return [...breakdown.values()]
+		.map((item) => ({
+			...item,
+			usage: { ...item.usage, cost: normalizeCost(item.usage.cost) },
+		}))
+		.filter((item) => item.usage.total > 0 || item.usage.cost > 0)
+		.sort((left, right) => right.usage.total - left.usage.total || left.key.localeCompare(right.key));
 }
 
 function normalizeAgentName(name: string): string {
@@ -1166,8 +1221,10 @@ export class AgentControl {
 
 	getUsage(ctx: ExtensionContext): AgentUsageReport {
 		this.callerPath(ctx);
-		const main = sessionUsage(ctx.sessionManager);
+		const mainDetails = sessionUsageDetails(ctx.sessionManager);
+		const main = mainDetails.totals;
 		const subagents = emptyUsageTotals();
+		const subagentBreakdown = new Map<string, AgentUsageBreakdownEntry>();
 		let unreadableSubagents = 0;
 		const countedSessionIds = new Set<string>();
 		for (const record of this.agentsByPath.values()) {
@@ -1182,7 +1239,9 @@ export class AgentControl {
 				const sessionId = manager.getSessionId();
 				if (countedSessionIds.has(sessionId)) continue;
 				countedSessionIds.add(sessionId);
-				addUsageTotals(subagents, sessionUsage(manager));
+				const details = sessionUsageDetails(manager);
+				addUsageTotals(subagents, details.totals);
+				mergeUsageBreakdown(subagentBreakdown, details.breakdown);
 			} catch {
 				unreadableSubagents++;
 			}
@@ -1197,6 +1256,8 @@ export class AgentControl {
 			main,
 			subagents,
 			combined,
+			mainBreakdown: finalizeBreakdown(mainDetails.breakdown),
+			subagentBreakdown: finalizeBreakdown(subagentBreakdown),
 			subagentCount: this.agentsByPath.size,
 			unreadableSubagents,
 		};

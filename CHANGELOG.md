@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0 - 2026-09-10
+
+- Render `/agent-usage` directly in the normal TUI transcript through Pi's TUI-only custom-entry API instead of opening an overlay.
+- Add main-model and sub-agent-model usage breakdowns using the actual response model reported by each assistant call.
+- Show per-model input, output, cache reads/writes, total tokens, cost, contributing Agent-session count, and usage-record count.
+- Keep unattributable tool and summary usage in a separate `Tools/summaries` bucket.
+- Preserve strict separation from LLM context and built-in `/session` cache accounting.
+
 ## 0.8.1 - 2026-09-10
 
 - Remove automatic legacy-file archival and its full main-session scan; the extension no longer archives or deletes user session data.

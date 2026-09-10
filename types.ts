@@ -6,6 +6,7 @@ export const EXTENSION_ID = "codex-agents";
 export const STATE_ENTRY_TYPE = "codex-agents-state";
 export const CHILD_META_ENTRY_TYPE = "codex-agents-child-meta";
 export const FORK_CONTEXT_ENTRY_TYPE = "codex-agents-fork-context";
+export const USAGE_ENTRY_TYPE = "pi-agents-usage";
 export const ROOT_PATH = "/root";
 export const DIRECT_AGENT_TOOL_NAMES = [
 	"spawn_agents",
@@ -113,10 +114,19 @@ export interface AgentUsageTotals {
 	cost: number;
 }
 
+export interface AgentUsageBreakdownEntry {
+	key: string;
+	usage: AgentUsageTotals;
+	sessionCount: number;
+	operations: number;
+}
+
 export interface AgentUsageReport {
 	main: AgentUsageTotals;
 	subagents: AgentUsageTotals;
 	combined: AgentUsageTotals;
+	mainBreakdown: AgentUsageBreakdownEntry[];
+	subagentBreakdown: AgentUsageBreakdownEntry[];
 	subagentCount: number;
 	unreadableSubagents: number;
 }
