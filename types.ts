@@ -67,6 +67,9 @@ export interface AgentRecord extends PersistedAgent {
 	loaded: boolean;
 	holdsExecutionSlot: boolean;
 	launchGeneration: number;
+	cancelledGeneration?: number;
+	liveTools?: Map<string, LiveToolExecution>;
+	activity?: { label: string; since: number };
 	lastCompletionTimestamp?: number;
 }
 
@@ -131,7 +134,16 @@ export interface AgentUsageReport {
 	unreadableSubagents: number;
 }
 
+export interface LiveToolExecution {
+	name: string;
+	startedAt: number;
+	endedAt?: number;
+	partial?: import("@earendil-works/pi-agent-core").AgentToolResult<any>;
+}
+
 export interface AgentTranscriptView {
+	liveTools?: Map<string, LiveToolExecution>;
+	activity?: { label: string; since: number };
 	agent: AgentView;
 	sessionFile: string;
 	cwd: string;

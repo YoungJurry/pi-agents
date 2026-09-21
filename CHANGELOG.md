@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.1 - 2026-09-21
+
+- Keep native tool-renderer instances across transcript refreshes and forward live partial tool output.
+- Display live tool execution durations separately from model response/wait/retry durations while the inspector is open; dispose its refresh clock on close.
+- Track explicit cancellation by run generation so aborted runs remain interrupted, preserve previous results, and do not emit erroneous failure notices.
+
 ## 0.10.0 - 2026-09-10
 
 - Remove all automatic compatibility, path translation, and file-moving logic for legacy Agent storage.

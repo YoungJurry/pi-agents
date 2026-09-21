@@ -738,12 +738,32 @@ export class AgentControl {
 				record.statusMessage = undefined;
 				record.updatedAt = Date.now();
 			}
+			if (event.type === "tool_execution_start") {
+				record.liveTools ??= new Map();
+				record.liveTools.set(event.toolCallId, { name: event.toolName, startedAt: Date.now() });
+			}
+			if (event.type === "tool_execution_update") {
+				const tool = record.liveTools?.get(event.toolCallId);
+				if (tool) tool.partial = event.partialResult;
+			}
+			if (event.type === "tool_execution_end") {
+				const tool = record.liveTools?.get(event.toolCallId);
+				if (tool) { tool.endedAt = Date.now(); tool.partial = undefined; }
+				record.activity = { label: "Waiting for model", since: Date.now() };
+			}
+			if (event.type === "auto_retry_start") {
+				record.activity = { label: "Retrying model", since: Date.now() };
+			}
 			if (event.type === "turn_start") {
+				record.activity = { label: "Waiting for model", since: Date.now() };
 				this.activeTurns.add(record.path);
 				this.markMailboxConsumed(record.path);
 			}
 			if (event.type === "turn_end") {
 				this.noteTurnEnd(record.path, event.message.role === "assistant" ? event.message.stopReason : undefined);
+			}
+			if (event.type === "message_update" && record.activity?.label !== "Model responding") {
+				record.activity = { label: "Model responding", since: Date.now() };
 			}
 			if (event.type === "message_update" || event.type === "tool_execution_start" || event.type === "tool_execution_end") {
 				record.updatedAt = Date.now();
@@ -756,6 +776,10 @@ export class AgentControl {
 				}
 			}
 			if (event.type === "agent_settled") {
+				for (const tool of record.liveTools?.values() ?? []) {
+					tool.endedAt ??= Date.now();
+					tool.partial = undefined;
+				}
 				this.releaseExecutionSlot(record);
 				this.persistState();
 				// Let AgentSession finish emitting its settled event before an LRU eviction
@@ -789,7 +813,7 @@ export class AgentControl {
 		if (answer.timestamp && answer.timestamp === record.lastCompletionTimestamp) return;
 		record.lastCompletionTimestamp = answer.timestamp;
 		record.updatedAt = Date.now();
-		if (answer.aborted) {
+		if (answer.aborted || record.cancelledGeneration === record.launchGeneration) {
 			record.status = "interrupted";
 			record.statusMessage = "interrupted";
 			this.persistState();
@@ -824,6 +848,7 @@ export class AgentControl {
 			record.holdsExecutionSlot = true;
 		}
 		record.launchGeneration++;
+		record.activity = { label: "Waiting for model", since: Date.now() };
 		record.status = "running";
 		record.statusMessage = undefined;
 		record.lastUsedAt = Date.now();
@@ -838,6 +863,12 @@ export class AgentControl {
 			{ triggerTurn: true, deliverAs: "steer" },
 		).catch((error) => {
 			if (generation !== record.launchGeneration) return;
+			if (record.cancelledGeneration === generation) {
+				record.status = "interrupted";
+				record.statusMessage = "interrupted";
+				this.persistState();
+				return;
+			}
 			if (carriedMail.length > 0) {
 				const newer = this.pendingMail.get(record.path) ?? [];
 				this.pendingMail.set(record.path, [...carriedMail, ...newer]);
@@ -1187,6 +1218,7 @@ export class AgentControl {
 			return this.view(record);
 		}
 		await this.ensureLoaded(record);
+		record.cancelledGeneration = record.launchGeneration;
 		await record.session!.abort();
 		record.status = "interrupted";
 		record.statusMessage = "interrupted";
@@ -1282,6 +1314,8 @@ export class AgentControl {
 			cwd: sessionManager.getCwd(),
 			messages,
 			toolDefinitions,
+			liveTools: record.liveTools,
+			activity: record.activity,
 			createdAt: record.createdAt,
 			updatedAt: record.updatedAt,
 		};
@@ -1481,6 +1515,7 @@ export class AgentControl {
 		this.pendingMail.clear();
 		for (const record of this.agentsByPath.values()) {
 			if (record.session?.isStreaming) {
+				record.cancelledGeneration = record.launchGeneration;
 				try { await record.session.abort(); } catch { /* best effort */ }
 				record.status = "interrupted";
 				record.statusMessage = "root session shut down";

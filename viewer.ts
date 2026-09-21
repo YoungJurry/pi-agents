@@ -272,6 +272,8 @@ export class AgentTranscriptViewer {
 	private refreshTimer?: ReturnType<typeof setTimeout>;
 	private readonly unsubscribe: () => void;
 	private toolDefinitions = new Map<string, ToolDefinition>();
+	private toolComponents = new Map<string, ToolExecutionComponent>();
+	private readonly clock: ReturnType<typeof setInterval>;
 
 	constructor(
 		private readonly tui: TUI,
@@ -283,6 +285,9 @@ export class AgentTranscriptViewer {
 	) {
 		this.refresh();
 		this.unsubscribe = subscribe(() => this.scheduleRefresh());
+		this.clock = setInterval(() => {
+			if (this.snapshot?.agent.status === "running") this.tui.requestRender();
+		}, 1000);
 	}
 
 	private scheduleRefresh(): void {
@@ -326,7 +331,9 @@ export class AgentTranscriptViewer {
 					this.content.addChild(new AssistantMessageComponent(message, this.hideThinking, markdownTheme, "thinking hidden", 0));
 					for (const block of message.content) {
 						if (block.type !== "toolCall") continue;
-						const component = new ToolExecutionComponent(
+						let component = this.toolComponents.get(block.id);
+						if (!component) {
+						component = new ToolExecutionComponent(
 							block.name,
 							block.id,
 							block.arguments,
@@ -335,8 +342,12 @@ export class AgentTranscriptViewer {
 							this.tui,
 							snapshot.cwd,
 						);
+						this.toolComponents.set(block.id, component);
 						component.markExecutionStarted();
 						component.setArgsComplete();
+						}
+						const live = snapshot.liveTools?.get(block.id);
+						if (live?.partial && !live.endedAt) component.updateResult({ ...live.partial, isError: false }, true);
 						component.setExpanded(this.expandedTools);
 						this.content.addChild(component);
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
@@ -453,6 +464,13 @@ export class AgentTranscriptViewer {
 		const title = agent
 			? `${statusIcon(agent.status)} ${agent.path}${agent.nickname ? ` (${agent.nickname})` : ""}`
 			: "Sub-agent transcript";
+		const activeTools = [...(snapshot?.liveTools?.values() ?? [])].filter((tool) => !tool.endedAt);
+		const elapsed = (since: number) => `${Math.max(0, Math.floor((Date.now() - since) / 1000))}s`;
+		const activity = agent?.status === "running"
+			? activeTools.length
+				? activeTools.map((tool) => `${tool.name} executing · ${elapsed(tool.startedAt)}`).join(" | ")
+				: snapshot?.activity ? `${snapshot.activity.label} · ${elapsed(snapshot.activity.since)}` : "Running"
+			: "Read-only";
 		const metadata = agent
 			? `${agent.status}${agent.status === "queued" ? ` #${agent.queuePosition ?? "?"} (waiting for execution slot)` : ""} · thinking ${agent.thinkingLevel ?? "unknown"} · ${agent.model}${agent.role ? ` · ${agent.role}` : ""} · ${snapshot.messages.length} messages`
 			: "unavailable";
@@ -474,7 +492,7 @@ export class AgentTranscriptViewer {
 				` ${this.theme.fg("dim", `↑/↓ move · ←/→ page · t top · b bottom · Ctrl+O tools ${this.expandedTools ? "on" : "off"} · Ctrl+T thinking ${this.hideThinking ? "hidden" : "shown"} · r refresh · Esc back`)}`,
 				innerWidth,
 			),
-			framedRow(this.theme, ` ${this.theme.fg("dim", snapshot ? `Read-only · created ${formatTimestamp(snapshot.createdAt)}` : "Read-only")}`, innerWidth),
+			framedRow(this.theme, ` ${this.theme.fg("dim", snapshot ? `${activity} · created ${formatTimestamp(snapshot.createdAt)}` : "Read-only")}`, innerWidth),
 			framedRule(this.theme, innerWidth, "╰", "╯"),
 		);
 		return lines;
@@ -486,6 +504,8 @@ export class AgentTranscriptViewer {
 
 	dispose(): void {
 		if (this.refreshTimer) clearTimeout(this.refreshTimer);
+		clearInterval(this.clock);
+		this.toolComponents.clear();
 		this.unsubscribe();
 	}
 }

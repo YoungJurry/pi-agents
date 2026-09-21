@@ -44,6 +44,8 @@ Use the user-only `/agents` command to browse the current root session's sub-age
 
 The picker orders agents by latest task assignment, newest first; a successful `followup_task` moves a reused agent back to the top without letting ordinary streaming or tool activity reshuffle the list. It shows lifecycle status, model, effective thinking level, role, nickname, and residency. Selecting an agent opens its active session branch with normal Pi-style assistant messages, thinking, tool calls, tool results, and collaboration messages. Custom tools reuse their original Pi renderers, so tools such as `web_search` and `fetch` stay as compact as they are in the main transcript. Running sessions refresh while the viewer is open. Child permission dialogs wait behind the inspector and appear only after the user fully exits `/agents`, so they cannot steal focus from or hide behind its overlay.
 
+The open transcript inspector reuses native tool components and displays live partial output. Its footer distinguishes tool execution time from model response, waiting, and retry time, updating once per second even when no output arrives. Timings are collected for live loaded sessions, not reconstructed for historical sessions. Explicitly interrupted runs remain `interrupted` and do not emit failure notices for cancellation exceptions.
+
 Viewer controls:
 
 - `↑` / `↓`: move one line
