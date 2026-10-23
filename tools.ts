@@ -190,9 +190,13 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 	const waitAgent = defineTool({
 		name: "wait_agent",
 		label: "Wait Agent",
-		description: "Wait for agent activity and receive queued completion notices in the result; use this instead of polling.",
+		description: "Wait for agent activity and receive queued completion notices in the result; wait indefinitely unless timeout_ms is provided. Use this instead of polling.",
 		parameters: Type.Object({
-			timeout_ms: Type.Optional(Type.Integer({ minimum: 1, maximum: 3_600_000 })),
+			timeout_ms: Type.Optional(Type.Integer({
+				minimum: 1,
+				maximum: 3_600_000,
+				description: "Optional timeout in milliseconds; omit to wait indefinitely.",
+			})),
 		}),
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const sender = control.callerPath(ctx);
@@ -209,7 +213,7 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 			return result(text, details("wait_agent", sender, agents, text, outcome.timedOut));
 		},
 		renderCall(args, theme) {
-			return renderCallHeader("wait_agent", `${args.timeout_ms ?? 30_000}ms`, theme);
+			return renderCallHeader("wait_agent", args.timeout_ms === undefined ? "no timeout" : `${args.timeout_ms}ms`, theme);
 		},
 		renderResult: renderCollaborationResult,
 	});

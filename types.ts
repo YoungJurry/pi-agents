@@ -51,6 +51,7 @@ export interface PersistedAgent {
 	updatedAt: number;
 	lastUsedAt: number;
 	lastAssignedAt?: number;
+	queuedAt?: number;
 	queuedMessage?: string;
 	queuedMail?: string[];
 }

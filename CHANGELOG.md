@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.3 - 2026-10-23
+
+- Wait indefinitely for mailbox activity when `wait_agent` omits `timeout_ms`; retain explicit timeout limits, message wakeups, and cancellation.
+- Queue follow-up work for reused idle agents through the persistent scheduler instead of failing when execution or resident capacity is full.
+- Preserve FIFO assignment order, queued follow-up messages, and session identity across reuse and restoration; keep non-waking mail from loading unloaded sessions.
+- Add regression coverage without changing `followup_task` descriptions, parameters, or root-agent prompt guidance.
+
 ## 0.10.1 - 2026-09-21
 
 - Keep native tool-renderer instances across transcript refreshes and forward live partial tool output.

@@ -58,7 +58,6 @@ import {
 } from "./types.ts";
 import { getAgentStorageDirectory } from "./storage.ts";
 
-const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const MIN_WAIT_TIMEOUT_MS = 10_000;
 const MAX_WAIT_TIMEOUT_MS = 3_600_000;
 
@@ -94,7 +93,7 @@ interface MessageRequest {
 
 interface StateWaiter {
 	resolve: (value: "mailbox" | "timeout" | "aborted") => void;
-	timer: ReturnType<typeof setTimeout>;
+	timer?: ReturnType<typeof setTimeout>;
 	abort?: () => void;
 }
 
@@ -230,6 +229,7 @@ function clonePersisted(record: AgentRecord): PersistedAgent {
 		updatedAt: record.updatedAt,
 		lastUsedAt: record.lastUsedAt,
 		lastAssignedAt: record.lastAssignedAt,
+		queuedAt: record.queuedAt,
 		queuedMessage: record.queuedMessage,
 		queuedMail: record.queuedMail,
 	};
@@ -956,6 +956,7 @@ export class AgentControl {
 	private materializeQueuedBatch(ctx: ExtensionContext, prepared: PreparedSpawn[]): AgentRecord[] {
 		const records: AgentRecord[] = [];
 		const baseTime = Date.now();
+		const queueTime = this.nextQueuedAt();
 		try {
 			for (let index = 0; index < prepared.length; index++) {
 				const item = prepared[index];
@@ -978,6 +979,7 @@ export class AgentControl {
 					updatedAt: now,
 					lastUsedAt: now,
 					lastAssignedAt: now,
+					queuedAt: queueTime + index,
 					loaded: false,
 					holdsExecutionSlot: false,
 					launchGeneration: 0,
@@ -1039,6 +1041,7 @@ export class AgentControl {
 			if ((record.queuedMail?.length ?? 0) > 0) this.mailboxPending.set(record.path, 0);
 			record.queuedMessage = undefined;
 			record.queuedMail = undefined;
+			record.queuedAt = undefined;
 			this.launch(record, content);
 			this.persistState();
 			return true;
@@ -1048,6 +1051,7 @@ export class AgentControl {
 			record.finalAnswer = record.statusMessage;
 			record.queuedMessage = undefined;
 			record.queuedMail = undefined;
+			record.queuedAt = undefined;
 			record.updatedAt = Date.now();
 			this.releaseExecutionSlot(record);
 			this.writeAgentResult(record);
@@ -1119,17 +1123,28 @@ export class AgentControl {
 		} else {
 			const record = this.agentsByPath.get(recipientPath);
 			if (!record) throw new Error(`agent ${recipientPath} not found`);
-			if (!record.session && (record.status === "queued" || record.status === "pending_init")) {
+			if (triggerTurn && (record.status === "queued" || record.status === "pending_init" || (!record.holdsExecutionSlot && record.session?.isIdle !== false))) {
+				// Reused idle sessions must acquire capacity through the same durable
+				// scheduler as new tasks; full residency is backpressure, not failure.
+				if (record.status !== "queued" && record.status !== "pending_init") {
+					record.queuedAt = this.nextQueuedAt();
+					record.status = "queued";
+					record.statusMessage = "waiting for an execution slot";
+				}
+				record.queuedMessage = [record.queuedMessage, content].filter(Boolean).join("\n\n");
+				record.updatedAt = Date.now();
+				this.persistState();
+				await this.scheduleQueued();
+			} else if (!record.session) {
+				// Non-waking mail must not load an unloaded session just to deliver it.
 				record.queuedMail = [...(record.queuedMail ?? []), content];
 				record.updatedAt = Date.now();
 				this.persistState();
 			} else {
-				await this.ensureLoaded(record);
-				const wasIdle = record.session!.isIdle;
-				if (triggerTurn && wasIdle) {
+				if (triggerTurn && record.session.isIdle) {
 					this.launch(record, content);
 				} else {
-					await record.session!.sendCustomMessage(
+					await record.session.sendCustomMessage(
 						{ customType: EXTENSION_ID, content, display: true, details: { sender: senderPath, recipient: recipientPath, type } },
 						{ triggerTurn, deliverAs: "steer" },
 					);
@@ -1161,7 +1176,7 @@ export class AgentControl {
 		const waiters = this.waiters.get(recipientPath);
 		if (waiters) {
 			for (const waiter of [...waiters]) {
-				clearTimeout(waiter.timer);
+				if (waiter.timer !== undefined) clearTimeout(waiter.timer);
 				waiter.abort?.();
 				waiter.resolve("mailbox");
 			}
@@ -1171,23 +1186,25 @@ export class AgentControl {
 	}
 
 	async waitForMailbox(ctx: ExtensionContext, timeoutMs?: number, signal?: AbortSignal): Promise<{ timedOut: boolean; aborted: boolean }> {
+		if (signal?.aborted) return { timedOut: false, aborted: true };
 		const callerPath = this.callerPath(ctx);
 		if ((this.pendingMail.get(callerPath)?.length || 0) > 0 || (this.mailboxPending.get(callerPath) || 0) > 0) {
 			this.mailboxPending.set(callerPath, 0);
 			return { timedOut: false, aborted: false };
 		}
-		const duration = Math.min(MAX_WAIT_TIMEOUT_MS, Math.max(MIN_WAIT_TIMEOUT_MS, timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS));
 		const outcome = await new Promise<"mailbox" | "timeout" | "aborted">((resolve) => {
-			const waiter: StateWaiter = {
-				resolve,
-				timer: setTimeout(() => {
+			const waiter: StateWaiter = { resolve };
+			if (timeoutMs !== undefined) {
+				const duration = Math.min(MAX_WAIT_TIMEOUT_MS, Math.max(MIN_WAIT_TIMEOUT_MS, timeoutMs));
+				waiter.timer = setTimeout(() => {
 					this.waiters.get(callerPath)?.delete(waiter);
+					waiter.abort?.();
 					resolve("timeout");
-				}, duration),
-			};
+				}, duration);
+			}
 			if (signal) {
 				const onAbort = () => {
-					clearTimeout(waiter.timer);
+					if (waiter.timer !== undefined) clearTimeout(waiter.timer);
 					this.waiters.get(callerPath)?.delete(waiter);
 					resolve("aborted");
 				};
@@ -1213,6 +1230,7 @@ export class AgentControl {
 			record.statusMessage = "cancelled while waiting for an execution slot";
 			record.queuedMessage = undefined;
 			record.queuedMail = undefined;
+			record.queuedAt = undefined;
 			record.updatedAt = Date.now();
 			this.persistState();
 			return this.view(record);
@@ -1351,7 +1369,12 @@ export class AgentControl {
 	private queuedRecords(): AgentRecord[] {
 		return [...this.agentsByPath.values()]
 			.filter((record) => record.status === "queued")
-			.sort((left, right) => left.createdAt - right.createdAt);
+			.sort((left, right) => (left.queuedAt ?? left.createdAt) - (right.queuedAt ?? right.createdAt));
+	}
+
+	private nextQueuedAt(): number {
+		const tail = this.queuedRecords().at(-1);
+		return Math.max(Date.now(), tail ? (tail.queuedAt ?? tail.createdAt) + 1 : 0);
 	}
 
 	private queuePosition(record: AgentRecord): number | undefined {
@@ -1505,7 +1528,7 @@ export class AgentControl {
 		}
 		for (const waiters of this.waiters.values()) {
 			for (const waiter of waiters) {
-				clearTimeout(waiter.timer);
+				if (waiter.timer !== undefined) clearTimeout(waiter.timer);
 				waiter.abort?.();
 				waiter.resolve("aborted");
 			}
