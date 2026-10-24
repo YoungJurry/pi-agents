@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add `switch_agent_model` through the existing action catalog and dispatcher, preserving child identity, conversation history, queued work, and results.
+- Use Pi's native request-boundary model selection for working agents without aborting their current request or tools; keep idle and unloaded agents asleep.
+- Persist model/thinking selections across lazy restoration, validate provider authentication, and serialize changes with session loading and LRU residency management.
+- Remove the implicit root-model fallback when a persisted child model is unavailable.
+
 ## 0.10.3 - 2026-10-23
 
 - Wait indefinitely for mailbox activity when `wait_agent` omits `timeout_ms`; retain explicit timeout limits, message wakeups, and cancellation.

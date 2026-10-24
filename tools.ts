@@ -236,7 +236,36 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 		renderResult: renderCollaborationResult,
 	});
 
-	const directTools = [spawnAgents, sendMessage, followupTask, waitAgent, interruptAgent];
+	const switchAgentModel = defineTool({
+		name: "switch_agent_model",
+		label: "Switch Agent Model",
+		description: "Change a sub-agent's model without interrupting or waking it. An in-flight request and its tools finish normally; the next model request uses the new selection. Use followup_task to continue an idle or failed agent.",
+		parameters: Type.Object({
+			target: Type.String({ description: "Absolute agent path, child-relative name, or agent session ID" }),
+			model: Type.String({ minLength: 1, description: "New provider/model selection" }),
+			reasoning_effort: Type.Optional(StringEnum(
+				["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
+				{ description: "Optional thinking override; otherwise retain the current level, clamped to the new model's capabilities" },
+			)),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const sender = control.callerPath(ctx);
+			const target = await control.switchModel(ctx, params.target, params.model, params.reasoning_effort);
+			return result(
+				JSON.stringify({
+					path: target.path, model: target.model, thinking_level: target.thinkingLevel,
+					status: target.status, applies_to: "next_request", wakes_agent: false,
+				}),
+				details("switch_agent_model", sender, [target]),
+			);
+		},
+		renderCall(args, theme) {
+			return renderCallHeader("switch_agent_model", `${args.target} → ${args.model}`, theme);
+		},
+		renderResult: renderCollaborationResult,
+	});
+
+	const directTools = [spawnAgents, sendMessage, followupTask, waitAgent, interruptAgent, switchAgentModel];
 	const toolCatalog: AgentToolCatalogEntry[] = directTools.map((tool) => ({
 		name: tool.name,
 		description: tool.description,

@@ -323,6 +323,20 @@ export class AgentControl {
 		return result;
 	}
 
+	private enqueueSessionOperation<T>(record: AgentRecord, operation: () => Promise<T>): Promise<T> {
+		const result = (record.sessionOperationTail ?? Promise.resolve()).then(operation);
+		const tail = result.then(() => undefined, () => undefined);
+		record.sessionOperationTail = tail;
+		void tail.then(() => {
+			if (record.sessionOperationTail !== tail) return;
+			record.sessionOperationTail = undefined;
+			// A queued task may have encountered this idle resident while it was
+			// protected from eviction. Resume normal scheduling after the operation.
+			if (record.loaded && this.queuedRecords().length > 0) void this.scheduleQueued();
+		});
+		return result;
+	}
+
 	private configureChildTools(session: NonNullable<AgentRecord["session"]>): void {
 		const hidden = new Set<string>([...DIRECT_AGENT_TOOL_NAMES, "spawn_agent"]);
 		const active = session.getActiveToolNames().filter((name) => !hidden.has(name));
@@ -699,7 +713,7 @@ export class AgentControl {
 		const allResidents = [...this.agentsByPath.values()].filter((record) => record.loaded);
 		if (allResidents.length < this.maxResidentSubagents) return true;
 		const candidate = allResidents
-			.filter((record) => record.path !== protectedPath)
+			.filter((record) => record.path !== protectedPath && !record.sessionOperationTail)
 			.filter((record) => record.status !== "running" && !record.holdsExecutionSlot && record.session?.isIdle !== false)
 			.sort((left, right) => left.lastUsedAt - right.lastUsedAt)[0];
 		if (!candidate) return false;
@@ -1171,6 +1185,40 @@ export class AgentControl {
 		return target.path === ROOT_PATH ? this.rootView() : this.view(target.record!);
 	}
 
+	async switchModel(ctx: ExtensionContext, reference: string, requestedModel: string, thinkingLevel?: ThinkingLevel): Promise<AgentView> {
+		const callerPath = this.callerPath(ctx);
+		const target = this.requireTarget(callerPath, reference);
+		if (target.path === ROOT_PATH) throw new Error("root is not a spawned agent");
+		if (target.path === callerPath) throw new Error("an agent cannot switch its own model");
+		const record = target.record!;
+		return this.enqueueSessionOperation(record, async () => {
+			if (this.disposed || this.shuttingDown) throw new Error("agent control is shutting down");
+			const model = await this.resolveModel(ctx, requestedModel);
+			const effectiveThinking = selectAgentThinkingLevel(
+				model, undefined, thinkingLevel ?? record.session?.thinkingLevel ?? record.thinkingLevel, undefined, undefined,
+			);
+			if (record.session) {
+				// Pi snapshots the selection at request boundaries. Do not abort or wait
+				// for the run: its current request and tool batch must finish normally.
+				await record.session.setModel(model);
+				record.session.setThinkingLevel(effectiveThinking);
+			} else {
+				const runtime = await this.getModelRuntime(ctx);
+				if (!(await runtime.checkAuth(model.provider))) {
+					throw new Error(`No API key for ${model.provider}/${model.id}`);
+				}
+			}
+			// The tree selection is authoritative when an unloaded session is reopened.
+			// Preserve lifecycle, queued work, results, identity, and assignment order.
+			record.modelProvider = model.provider;
+			record.modelId = model.id;
+			record.thinkingLevel = record.session?.thinkingLevel ?? effectiveThinking;
+			record.updatedAt = Date.now();
+			this.persistState();
+			return this.view(record);
+		});
+	}
+
 	private notifyMailbox(recipientPath: string): void {
 		this.mailboxPending.set(recipientPath, (this.mailboxPending.get(recipientPath) || 0) + 1);
 		const waiters = this.waiters.get(recipientPath);
@@ -1468,7 +1516,11 @@ export class AgentControl {
 		return [];
 	}
 
-	private async ensureLoaded(record: AgentRecord): Promise<void> {
+	private ensureLoaded(record: AgentRecord): Promise<void> {
+		return this.enqueueSessionOperation(record, () => this.loadSession(record));
+	}
+
+	private async loadSession(record: AgentRecord): Promise<void> {
 		if (record.session) {
 			record.loaded = true;
 			record.lastUsedAt = Date.now();
@@ -1491,7 +1543,7 @@ export class AgentControl {
 			role.skills,
 		);
 		const runtime = await this.getModelRuntime(this.root.ctx);
-		const model = runtime.getModel(record.modelProvider, record.modelId) || this.root.model;
+		const model = runtime.getModel(record.modelProvider, record.modelId);
 		if (!model) throw new Error(`model ${record.modelProvider}/${record.modelId} is unavailable`);
 		const allowedTools = role.tools ? [...new Set([...role.tools, ...COLLABORATION_TOOL_NAMES])] : undefined;
 		const { session } = await createAgentSession({
@@ -1526,6 +1578,7 @@ export class AgentControl {
 		if (this.schedulerPromise) {
 			try { await this.schedulerPromise; } catch { /* scheduler failures are recorded per agent */ }
 		}
+		await Promise.allSettled([...this.agentsByPath.values()].map((record) => record.sessionOperationTail));
 		for (const waiters of this.waiters.values()) {
 			for (const waiter of waiters) {
 				if (waiter.timer !== undefined) clearTimeout(waiter.timer);

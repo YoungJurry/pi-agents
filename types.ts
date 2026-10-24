@@ -14,6 +14,7 @@ export const DIRECT_AGENT_TOOL_NAMES = [
 	"followup_task",
 	"wait_agent",
 	"interrupt_agent",
+	"switch_agent_model",
 ] as const;
 export const AGENT_GATEWAY_TOOL_NAMES = ["list_agents", "agent_action"] as const;
 export const COLLABORATION_TOOL_NAMES = [
@@ -72,6 +73,8 @@ export interface AgentRecord extends PersistedAgent {
 	liveTools?: Map<string, LiveToolExecution>;
 	activity?: { label: string; since: number };
 	lastCompletionTimestamp?: number;
+	/** Serializes loading and model selection, never the agent run itself. */
+	sessionOperationTail?: Promise<void>;
 }
 
 export interface RootBinding {

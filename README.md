@@ -88,6 +88,7 @@ Only two compact collaboration schemas remain active:
 - `followup_task`: assign more work and trigger processing
 - `wait_agent`: event-driven mailbox wait; waits indefinitely unless `timeout_ms` is provided
 - `interrupt_agent`: abort a run without deleting context
+- `switch_agent_model`: change an existing child's model without interrupting or waking it
 
 Example dispatcher call:
 
@@ -111,7 +112,7 @@ Example dispatcher call:
 }
 ```
 
-The five action implementations stay registered locally, but their individual provider schemas are never added to later requests. `spawn_agents` replaces the old single-task action rather than adding a redundant sixth action; an array with one item performs a single spawn. Root and child agents use the same stable `list_agents` + `agent_action` surface. Agents use canonical paths such as `/root/api_research` and can recursively spawn children.
+The six action implementations stay registered locally, but their individual provider schemas are never added to later requests. `spawn_agents` accepts an array with one item for a single spawn. Root and child agents use the same stable `list_agents` + `agent_action` surface. Agents use canonical paths such as `/root/api_research` and can recursively spawn children.
 
 ## Context inheritance
 
@@ -177,6 +178,32 @@ Model and thinking configuration uses task fields first, then Role frontmatter, 
 Unsupported thinking values are clamped through Pi's model-specific `thinkingLevelMap`, and the effective level is persisted and displayed. If `defaultThinkingLevel` is omitted, the plugin-level default is `medium`. Supported configured values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
 
 The settings file is optional, but spawning requires a model from either the task, selected Role, or `defaultModel`; it no longer inherits the parent model. Limits must be positive integers, and `maxResidentSubagents` cannot be smaller than `maxConcurrentSubagents`. If concurrency is configured while residency is omitted, residency automatically expands to at least the concurrency limit. Setting changes take effect after `/reload`. Invalid JSON, an invalid `defaultThinkingLevel`, an empty `defaultModel`, or an unavailable configured model produces an explicit error. `fork_turns` controls inherited messages independently of model and thinking selection.
+
+## Switch an existing agent's model
+
+Use `switch_agent_model` through the existing dispatcher:
+
+```json
+{
+  "action": "switch_agent_model",
+  "arguments": {
+    "target": "/root/api_research",
+    "model": "openai/gpt-5.4",
+    "reasoning_effort": "high"
+  }
+}
+```
+
+`target` accepts a canonical path, caller-relative child name, or session ID. `model` is required; `reasoning_effort` is optional. Without a thinking override, the current level is retained and clamped to the new model's capabilities. The target cannot be the root or the caller itself. Invalid models or missing provider authentication fail without changing the selection.
+
+- **Working:** Pi's native `AgentSession.setModel()` changes the selection for the next model request. An in-flight request and its tool calls finish normally; switching does not abort, restart, or force another turn.
+- **Idle, completed, errored, or interrupted:** only the selection changes. Use `followup_task` explicitly to continue the same conversation.
+- **Queued:** the task retains its FIFO position and queued instructions, using the new selection when it starts.
+- **Unloaded:** the selection is persisted in the root's agent-tree metadata without loading a child session or taking an execution/residency slot. Lazy restoration uses that selection, never an implicit root-model fallback.
+
+Session ID, path, nickname, history, mailbox, and stored results are preserved. Switching does not change the main agent, Role/global defaults, or task assignment order. Loading and model changes for the same child are serialized without waiting for its active run to finish.
+
+Switching cannot rescue a hung in-flight request immediately: interrupt it separately if necessary. If a request ends in a terminal error, switching does not retry it automatically. A smaller context window or different model capabilities can still cause normal compatibility errors.
 
 ## Lifecycle
 
