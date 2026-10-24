@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 - 2026-10-24
 
 - Add `switch_agent_model` through the existing action catalog and dispatcher, preserving child identity, conversation history, queued work, and results.
 - Use Pi's native request-boundary model selection for working agents without aborting their current request or tools; keep idle and unloaded agents asleep.
