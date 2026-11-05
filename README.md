@@ -86,7 +86,7 @@ Only two compact collaboration schemas remain active:
 - `spawn_agents`: submit one or many persistent child tasks in a single action; overflow waits in the visible FIFO queue
 - `send_message`: non-waking mailbox message
 - `followup_task`: assign more work and trigger processing
-- `wait_agent`: event-driven mailbox wait; waits indefinitely unless `timeout_ms` is provided
+- `wait_agent`: event-driven mailbox wait; defaults to 30 seconds, with an optional `timeout_ms` up to 2 hours
 - `interrupt_agent`: abort a run without deleting context
 - `switch_agent_model`: change an existing child's model without interrupting or waking it
 
@@ -227,7 +227,7 @@ Switching cannot rescue a hung in-flight request immediately: interrupt it separ
 - Parents receive a compact completion notice instead of the full answer; use `list_agents(view="results")` or read the result file on demand
 - Notices to a busy agent are queued safely: `wait_agent` returns them in its own result, and any leftovers are delivered right after a successful recipient turn
 - `wait_agent` sends only newly queued mailbox notices to the model; its child status tree excludes the active caller, is folded in the TUI by default, and can be toggled with `Ctrl+O`
-- Omitting `timeout_ms` waits indefinitely until mailbox activity or cancellation; explicitly provided timeouts retain the 10-second minimum and 1-hour maximum. A timeout ends only the wait, not the child task
+- Omitting `timeout_ms` waits up to 30 seconds. Explicit timeouts below 10 seconds are raised to 10 seconds; the maximum is 7,200,000 milliseconds (2 hours). Mailbox activity or cancellation can end a wait early. A timeout ends only the wait, not the child task
 - Failed notice delivery is re-queued instead of silently discarded
 - Notices pending when a turn is aborted or errors are deferred to the next explicit turn without restarting the interrupted agent
 - The extension never inserts messages between an assistant tool call and its tool result, keeping session history protocol-valid for strict gateways

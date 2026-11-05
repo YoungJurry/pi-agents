@@ -40,17 +40,19 @@ function dispatcher(control: any): any {
 	return createCollaborationTools(control).find(tool => tool.name === 'agent_action');
 }
 
-test('omitted timeout creates no timer and remains pending after seven simulated days', async t => {
+test('omitted timeout expires after 30 seconds and cleans up its waiter', async t => {
 	mockTimers(t);
 	const { control, caller, ctx } = fixture(t);
 	const abort = new AbortController();
 	const state = track(control.waitForMailbox(ctx, undefined, abort.signal));
-	assert.equal([...control.waiters.get(caller)][0].timer, undefined);
-	t.mock.timers.tick(7 * 24 * 60 * 60 * 1000);
+	assert.notEqual([...control.waiters.get(caller)][0].timer, undefined);
+	t.mock.timers.tick(29999);
 	await flush();
 	assert.equal(state.settled, false);
-	control.notifyMailbox(caller);
-	assert.deepEqual(await state.promise, { timedOut: false, aborted: false });
+	t.mock.timers.tick(1);
+	await flush();
+	assert.equal(state.settled, true);
+	assert.deepEqual(await state.promise, { timedOut: true, aborted: false });
 	assert.equal(control.waiters.get(caller).size, 0);
 	assert.equal(getEventListeners(abort.signal, 'abort').length, 0);
 });
@@ -65,7 +67,7 @@ for (const kind of ['queued mail', 'pending notification']) {
 	});
 }
 
-for (const [input, expected] of [[1, 10000], [45000, 45000], [3600000, 3600000], [3600001, 3600000]]) {
+for (const [input, expected] of [[1, 10000], [10000, 10000], [45000, 45000], [3600000, 3600000], [3600001, 3600001], [7200000, 7200000], [7200001, 7200000]]) {
 	test(`explicit timeout ${input} preserves effective duration ${expected}`, async t => {
 		mockTimers(t);
 		const { control, caller, ctx } = fixture(t);
@@ -81,8 +83,8 @@ for (const [input, expected] of [[1, 10000], [45000, 45000], [3600000, 3600000],
 	});
 }
 
-for (const timeout of [undefined, 30000]) {
-	test(`abort cancels ${timeout === undefined ? 'indefinite' : 'timed'} waiting`, async t => {
+for (const timeout of [undefined, 7200000]) {
+	test(`abort cancels ${timeout === undefined ? 'default' : 'two-hour'} waiting`, async t => {
 		mockTimers(t);
 		const { control, caller, ctx } = fixture(t);
 		const abort = new AbortController();
@@ -91,7 +93,7 @@ for (const timeout of [undefined, 30000]) {
 		assert.deepEqual(await waiting, { timedOut: false, aborted: true });
 		assert.equal(control.waiters.get(caller).size, 0);
 		assert.equal(getEventListeners(abort.signal, 'abort').length, 0);
-		t.mock.timers.tick(3600000);
+		t.mock.timers.tick(7200000);
 	});
 }
 
@@ -101,40 +103,39 @@ test('already-aborted signal returns immediately without creating a waiter', asy
 	assert.equal(control.waiters.size, 0);
 });
 
-test('shutdown releases both indefinite and timed waiters', async t => {
+test('shutdown releases both default and two-hour waiters', async t => {
 	mockTimers(t);
 	const { control, ctx } = fixture(t);
 	const abort = new AbortController();
-	const indefinite = control.waitForMailbox(ctx, undefined, abort.signal);
-	const timed = control.waitForMailbox(ctx, 30000, abort.signal);
+	const defaultWait = control.waitForMailbox(ctx, undefined, abort.signal);
+	const timed = control.waitForMailbox(ctx, 7200000, abort.signal);
 	await control.shutdown();
-	assert.deepEqual(await indefinite, { timedOut: false, aborted: true });
+	assert.deepEqual(await defaultWait, { timedOut: false, aborted: true });
 	assert.deepEqual(await timed, { timedOut: false, aborted: true });
 	assert.equal(control.waiters.size, 0);
 	assert.equal(getEventListeners(abort.signal, 'abort').length, 0);
 });
 
-test('mailbox wakes all waiters, including explicit timeout, before expiry', async t => {
+test('mailbox wakes all waiters, before either the default or two-hour deadline', async t => {
 	mockTimers(t);
 	const { control, caller, ctx } = fixture(t);
 	const abort = new AbortController();
-	const indefinite = control.waitForMailbox(ctx, undefined, abort.signal);
-	const timed = control.waitForMailbox(ctx, 30000, abort.signal);
+	const defaultWait = control.waitForMailbox(ctx, undefined, abort.signal);
+	const timed = control.waitForMailbox(ctx, 7200000, abort.signal);
 	control.notifyMailbox(caller);
-	assert.deepEqual(await indefinite, { timedOut: false, aborted: false });
+	assert.deepEqual(await defaultWait, { timedOut: false, aborted: false });
 	assert.deepEqual(await timed, { timedOut: false, aborted: false });
 	assert.equal(control.waiters.get(caller).size, 0);
 	assert.equal(getEventListeners(abort.signal, 'abort').length, 0);
-	t.mock.timers.tick(3600000);
+	t.mock.timers.tick(7200000);
 });
 
-test('dispatcher with empty arguments waits indefinitely and returns queued notices', async t => {
+test('dispatcher with empty arguments returns notices before the default deadline', async t => {
 	mockTimers(t);
 	const { control, caller, ctx } = fixture(t);
 	const action = dispatcher(control);
 	const state = track(action.execute('test', { action: 'wait_agent', arguments: {} }, undefined, undefined, ctx));
-	assert.equal([...control.waiters.get(caller)][0].timer, undefined);
-	t.mock.timers.tick(2 * 24 * 60 * 60 * 1000);
+	t.mock.timers.tick(1000);
 	await flush();
 	assert.equal(state.settled, false);
 	control.pendingMail.set(caller, ['child completed']);
@@ -144,6 +145,38 @@ test('dispatcher with empty arguments waits indefinitely and returns queued noti
 	assert.match(result.content[0].text, /child completed/);
 	assert.deepEqual(control.drainPendingMail(caller), []);
 });
+
+test('dispatcher with empty arguments returns a timeout after 30 seconds', async t => {
+	mockTimers(t);
+	const { control, ctx } = fixture(t);
+	const state = track(dispatcher(control).execute('test', { action: 'wait_agent', arguments: {} }, undefined, undefined, ctx));
+	t.mock.timers.tick(29999);
+	await flush();
+	assert.equal(state.settled, false);
+	t.mock.timers.tick(1);
+	await flush();
+	assert.equal(state.settled, true);
+	const result = await state.promise;
+	assert.equal(result.details.timedOut, true);
+	assert.equal(result.content[0].text, 'Wait timed out.');
+});
+
+for (const timeout_ms of [3600001, 7200000]) {
+	test(`dispatcher accepts a wait of ${timeout_ms}ms up to two hours`, async t => {
+		mockTimers(t);
+		const { control, ctx } = fixture(t);
+		const state = track(dispatcher(control).execute('test', {
+			action: 'wait_agent', arguments: { timeout_ms },
+		}, undefined, undefined, ctx));
+		t.mock.timers.tick(timeout_ms - 1);
+		await flush();
+		assert.equal(state.settled, false);
+		t.mock.timers.tick(1);
+		const result = await state.promise;
+		assert.equal(result.details.timedOut, true);
+		assert.equal(result.content[0].text, 'Wait timed out.');
+	});
+}
 
 test('dispatcher preserves explicit timeout and timeout result', async t => {
 	mockTimers(t);
@@ -162,13 +195,13 @@ test('dispatcher preserves explicit timeout and timeout result', async t => {
 test('dispatcher rejects invalid explicit timeouts', async t => {
 	const { control, ctx } = fixture(t);
 	const action = dispatcher(control);
-	for (const timeout_ms of [0, -1, 3600001, 1.5, null]) {
+	for (const timeout_ms of [0, -1, 7200001, 1.5, null]) {
 		await assert.rejects(action.execute('test', { action: 'wait_agent', arguments: { timeout_ms } }, undefined, undefined, ctx), /Invalid arguments for wait_agent/);
 	}
 	assert.equal(control.waiters.size, 0);
 });
 
-test('dispatcher surfaces cancellation for indefinite waiting', async t => {
+test('dispatcher surfaces cancellation for default waiting', async t => {
 	const { control, ctx } = fixture(t);
 	const action = dispatcher(control);
 	const abort = new AbortController();
@@ -177,17 +210,22 @@ test('dispatcher surfaces cancellation for indefinite waiting', async t => {
 	await assert.rejects(waiting, /wait_agent was aborted/);
 });
 
-test('catalog and renderer describe the indefinite default accurately', async t => {
+test('catalog and renderer describe the bounded default and two-hour maximum accurately', async t => {
 	const { control, ctx } = fixture(t);
 	const tools: any[] = createCollaborationTools(control);
 	const wait = tools.find((tool: any) => tool.name === 'wait_agent');
 	const list = tools.find(tool => tool.name === 'list_agents');
 	const result = await list.execute('test', { view: 'tools' }, undefined, undefined, ctx);
 	const entry = JSON.parse(result.content[0].text).tools.find((tool: any) => tool.name === 'wait_agent');
-	assert.match(entry.description, /wait indefinitely unless timeout_ms is provided/);
-	assert.match(entry.parameters.properties.timeout_ms.description, /omit to wait indefinitely/);
+	assert.match(entry.description, /default 30 seconds/);
+	assert.match(entry.parameters.properties.timeout_ms.description, /30000/);
+	assert.match(entry.parameters.properties.timeout_ms.description, /10000/);
+	assert.match(entry.parameters.properties.timeout_ms.description, /7200000/);
+	assert.equal(entry.parameters.properties.timeout_ms.maximum, 7200000);
+	assert.doesNotMatch(JSON.stringify(entry), /indefinit/i);
 	const theme = { fg: (_: string, value: string) => value, bold: (value: string) => value };
-	assert.match(wait.renderCall({}, theme).render(100).join('\n'), /no timeout/);
-	assert.doesNotMatch(wait.renderCall({}, theme).render(100).join('\n'), /30000ms/);
+	assert.match(wait.renderCall({}, theme).render(100).join('\n'), /30000ms/);
+	assert.doesNotMatch(wait.renderCall({}, theme).render(100).join('\n'), /no timeout/);
 	assert.match(wait.renderCall({ timeout_ms: 60000 }, theme).render(100).join('\n'), /60000ms/);
+	assert.match(wait.renderCall({ timeout_ms: 7200000 }, theme).render(100).join('\n'), /7200000ms/);
 });

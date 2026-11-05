@@ -8,6 +8,10 @@ export const CHILD_META_ENTRY_TYPE = "pi-agents-child-meta";
 export const FORK_CONTEXT_ENTRY_TYPE = "pi-agents-fork-context";
 export const USAGE_ENTRY_TYPE = "pi-agents-usage";
 export const ROOT_PATH = "/root";
+// Shared by the wait implementation, tool schema, and renderer.
+export const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
+export const MIN_WAIT_TIMEOUT_MS = 10_000;
+export const MAX_WAIT_TIMEOUT_MS = 7_200_000;
 export const DIRECT_AGENT_TOOL_NAMES = [
 	"spawn_agents",
 	"send_message",

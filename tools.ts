@@ -8,11 +8,14 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { AgentControl } from "./control.ts";
-import type {
-	AgentToolCatalogEntry,
-	AgentView,
-	CollaborationDetails,
-	CollaborationToolName,
+import {
+	DEFAULT_WAIT_TIMEOUT_MS,
+	MAX_WAIT_TIMEOUT_MS,
+	MIN_WAIT_TIMEOUT_MS,
+	type AgentToolCatalogEntry,
+	type AgentView,
+	type CollaborationDetails,
+	type CollaborationToolName,
 } from "./types.ts";
 
 const ThinkingLevelSchema = StringEnum(
@@ -190,12 +193,13 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 	const waitAgent = defineTool({
 		name: "wait_agent",
 		label: "Wait Agent",
-		description: "Wait for agent activity and receive queued completion notices in the result; wait indefinitely unless timeout_ms is provided. Use this instead of polling.",
+		description: `Wait for agent activity and receive queued completion notices in the result; default ${DEFAULT_WAIT_TIMEOUT_MS / 1000} seconds unless timeout_ms is provided. Use this instead of polling. A timeout ends only the wait, not the agent task.`,
 		parameters: Type.Object({
 			timeout_ms: Type.Optional(Type.Integer({
 				minimum: 1,
-				maximum: 3_600_000,
-				description: "Optional timeout in milliseconds; omit to wait indefinitely.",
+				maximum: MAX_WAIT_TIMEOUT_MS,
+				default: DEFAULT_WAIT_TIMEOUT_MS,
+				description: `Optional timeout in milliseconds; defaults to ${DEFAULT_WAIT_TIMEOUT_MS}. Values below ${MIN_WAIT_TIMEOUT_MS} use ${MIN_WAIT_TIMEOUT_MS}. Maximum ${MAX_WAIT_TIMEOUT_MS} (2 hours).`,
 			})),
 		}),
 		async execute(_id, params, signal, onUpdate, ctx) {
@@ -213,7 +217,7 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 			return result(text, details("wait_agent", sender, agents, text, outcome.timedOut));
 		},
 		renderCall(args, theme) {
-			return renderCallHeader("wait_agent", args.timeout_ms === undefined ? "no timeout" : `${args.timeout_ms}ms`, theme);
+			return renderCallHeader("wait_agent", `${args.timeout_ms ?? DEFAULT_WAIT_TIMEOUT_MS}ms`, theme);
 		},
 		renderResult: renderCollaborationResult,
 	});

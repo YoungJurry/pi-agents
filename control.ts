@@ -36,9 +36,12 @@ import {
 	AGENT_GATEWAY_TOOL_NAMES,
 	CHILD_META_ENTRY_TYPE,
 	COLLABORATION_TOOL_NAMES,
+	DEFAULT_WAIT_TIMEOUT_MS,
 	DIRECT_AGENT_TOOL_NAMES,
 	EXTENSION_ID,
 	FORK_CONTEXT_ENTRY_TYPE,
+	MAX_WAIT_TIMEOUT_MS,
+	MIN_WAIT_TIMEOUT_MS,
 	ROOT_PATH,
 	STATE_ENTRY_TYPE,
 	type AgentCounts,
@@ -57,9 +60,6 @@ import {
 	type RootBinding,
 } from "./types.ts";
 import { getAgentStorageDirectory } from "./storage.ts";
-
-const MIN_WAIT_TIMEOUT_MS = 10_000;
-const MAX_WAIT_TIMEOUT_MS = 3_600_000;
 
 const DEFAULT_NICKNAMES = [
 	"Ada", "Alan", "Grace", "Linus", "Margaret", "Edsger", "Barbara", "Donald",
@@ -1245,14 +1245,12 @@ export class AgentControl {
 		}
 		const outcome = await new Promise<"mailbox" | "timeout" | "aborted">((resolve) => {
 			const waiter: StateWaiter = { resolve };
-			if (timeoutMs !== undefined) {
-				const duration = Math.min(MAX_WAIT_TIMEOUT_MS, Math.max(MIN_WAIT_TIMEOUT_MS, timeoutMs));
-				waiter.timer = setTimeout(() => {
-					this.waiters.get(callerPath)?.delete(waiter);
-					waiter.abort?.();
-					resolve("timeout");
-				}, duration);
-			}
+			const duration = Math.min(MAX_WAIT_TIMEOUT_MS, Math.max(MIN_WAIT_TIMEOUT_MS, timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS));
+			waiter.timer = setTimeout(() => {
+				this.waiters.get(callerPath)?.delete(waiter);
+				waiter.abort?.();
+				resolve("timeout");
+			}, duration);
 			if (signal) {
 				const onAbort = () => {
 					if (waiter.timer !== undefined) clearTimeout(waiter.timer);

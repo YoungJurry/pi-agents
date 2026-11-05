@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Replace indefinite default mailbox waits with a 30-second timeout, keeping the 10-second minimum and extending the maximum to 2 hours. Keep tool schemas, catalog guidance, and the default-wait renderer aligned; timeouts end only the wait, not the agent task.
 - Append child identity and role instructions without replacing Pi's default system prompt or configured `SYSTEM.md`; preserve existing `APPEND_SYSTEM.md` and project instructions.
 - Explain teammate/status discovery and the action-catalog/dispatcher workflow in child guidance, including absolute paths for addressing teammates. No automatic roster or conversation sharing is added.
 - Preserve the original queued assignment and supplementary mail when child initialization fails, so explicit follow-up retries retain their instructions even after session restoration.
