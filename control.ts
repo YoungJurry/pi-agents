@@ -1063,8 +1063,10 @@ export class AgentControl {
 			record.status = "errored";
 			record.statusMessage = error instanceof Error ? error.message : String(error);
 			record.finalAnswer = record.statusMessage;
-			record.queuedMessage = undefined;
-			record.queuedMail = undefined;
+			// Initialization failed before the queued instructions were delivered.
+			// Keep them durable so an explicit follow-up (also after reload) can
+			// retry the original assignment together with any supplementary mail.
+			// Errored tasks leave the FIFO queue; do not automatically retry them.
 			record.queuedAt = undefined;
 			record.updatedAt = Date.now();
 			this.releaseExecutionSlot(record);

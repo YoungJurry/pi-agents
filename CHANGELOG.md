@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Preserve the original queued assignment and supplementary mail when child initialization fails, so explicit follow-up retries retain their instructions even after session restoration.
+- Add initialization-failure regression tests covering retry, restoration, one-time delivery, and preservation of existing conversation history.
+
 ## 0.11.0 - 2026-10-24
 
 - Add `switch_agent_model` through the existing action catalog and dispatcher, preserving child identity, conversation history, queued work, and results.
