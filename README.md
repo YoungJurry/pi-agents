@@ -116,6 +116,10 @@ The six action implementations stay registered locally, but their individual pro
 
 ## Context inheritance
 
+Child sessions keep Pi's normal system-prompt construction: default guidance (or a configured `SYSTEM.md`), existing `APPEND_SYSTEM.md`, and applicable project instructions. Child identity, collaboration guidance, and role instructions are appended rather than replacing the base prompt. This does not copy the parent's entire runtime prompt or synchronize conversations; task-specific restrictions should remain explicit in the assignment.
+
+Child guidance explains how to discover teammates with `list_agents(view="status")`, look up action schemas with `list_agents(view="tools")`, and invoke them through `agent_action`. Use canonical absolute paths when addressing teammates. No automatic agent roster is injected.
+
 Each item in the `spawn_agents` action accepts a `fork_turns` argument:
 
 - `none`: fresh context

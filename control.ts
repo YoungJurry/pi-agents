@@ -701,8 +701,9 @@ export class AgentControl {
 					skills: selectRoleSkills(assignedSkillNames, base.skills),
 				}),
 			}),
-			systemPromptOverride: (base) => [base || "You are a coding agent.", instructions]
-				.filter((part) => part.trim()).join("\n\n"),
+			// Append child guidance without replacing Pi defaults or the configured
+			// SYSTEM.md base; keep existing APPEND_SYSTEM.md instructions intact.
+			appendSystemPromptOverride: (base) => instructions.trim() ? [...base, instructions] : base,
 		});
 		await loader.reload();
 		this.captureTranscriptToolDefinitions(loader);

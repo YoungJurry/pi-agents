@@ -6,13 +6,15 @@ export type ForkMode = "none" | "all" | number;
 
 const SHARED_GUIDANCE = `All agents share the same working directory and filesystem. Edits made by one agent are immediately visible to every other agent. Coordinate ownership of files and avoid overwriting another agent's work.`;
 
+const COLLABORATION_DISCOVERY = `When you need to discover teammates or their status, call list_agents(view="status"). To discover available collaboration actions and their argument schemas, call list_agents(view="tools"), then invoke them through agent_action. Use the absolute agent paths returned by the status list when addressing teammates.`;
+
 export function rootAgentInstructions(): string {
 	return `<multi_agent_role>You can use sub-agents when parallel work would materially improve speed or quality.</multi_agent_role>`;
 }
 
 export function childAgentInstructions(path: string, parentPath: string, rolePrompt?: string): string {
 	const role = rolePrompt?.trim() ? `\n\n<agent_role>\n${rolePrompt.trim()}\n</agent_role>` : "";
-	return `<multi_agent_role>\nYou are ${path}, a sub-agent in a collaborative team. Your direct parent is ${parentPath}. Complete the assigned task independently. You can use the collaboration tools and may spawn child agents. Your full final response is stored as the task result; your parent receives only a brief completion notification. Do not repeatedly poll or send the same result manually.\n\n${SHARED_GUIDANCE}\n</multi_agent_role>${role}`;
+	return `<multi_agent_role>\nYou are ${path}, a sub-agent in a collaborative team. Your direct parent is ${parentPath}. Complete the assigned task independently. You can use the collaboration tools and may spawn child agents. Your full final response is stored as the task result; your parent receives only a brief completion notification. Do not repeatedly poll or send the same result manually.\n\n${COLLABORATION_DISCOVERY}\n\n${SHARED_GUIDANCE}\n</multi_agent_role>${role}`;
 }
 
 export function formatTeamMessage(options: {
