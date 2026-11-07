@@ -1,4 +1,3 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	defineTool,
 	type AgentToolResult,
@@ -18,11 +17,11 @@ import {
 	type CollaborationToolName,
 } from "./types.ts";
 
-const ThinkingLevelSchema = StringEnum(
+const ThinkingLevelSchema = Type.Enum(
 	["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
-	{ description: "Optional thinking override; otherwise Role then global defaults apply unless model is explicitly set" },
+	{ type: "string", description: "Optional thinking override; otherwise Role then global defaults apply unless model is explicitly set" },
 );
-const AgentListViewSchema = StringEnum(["roles", "tools", "status", "results"] as const);
+const AgentListViewSchema = Type.Enum(["roles", "tools", "status", "results"] as const, { type: "string" });
 const SpawnAgentItemSchema = Type.Object({
 	message: Type.String({ description: "Task to assign to the child agent" }),
 	task_name: Type.String({ description: "Unique lowercase name using letters, digits, and underscores" }),
@@ -247,9 +246,9 @@ export function createCollaborationTools(control: AgentControl): ToolDefinition[
 		parameters: Type.Object({
 			target: Type.String({ description: "Absolute agent path, child-relative name, or agent session ID" }),
 			model: Type.String({ minLength: 1, description: "New provider/model selection" }),
-			reasoning_effort: Type.Optional(StringEnum(
+			reasoning_effort: Type.Optional(Type.Enum(
 				["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
-				{ description: "Optional thinking override; otherwise retain the current level, clamped to the new model's capabilities" },
+				{ type: "string", description: "Optional thinking override; otherwise retain the current level, clamped to the new model's capabilities" },
 			)),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {

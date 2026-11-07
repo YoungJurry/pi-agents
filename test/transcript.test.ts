@@ -67,17 +67,15 @@ function createFixture() {
 		cwd: "/tmp/project",
 		model: undefined,
 		thinkingLevel: undefined,
-		getSystemPrompt: () => "",
 	} as any;
 	(control as any).root = {
 		ctx,
 		sessionId: rootSession.getSessionId(),
 		cwd: ctx.cwd,
-		systemPrompt: "",
 	};
 	(control as any).pathBySessionId.set(rootSession.getSessionId(), ROOT_PATH);
 	(control as any).agentsByPath.set(childPath, record);
-	return { directory, control, ctx, childPath, record, forkMessage };
+	return { directory, control, ctx, childPath, childSession, record, forkMessage };
 }
 
 test("transcript reads the child active branch without inherited fork context", () => {
@@ -96,10 +94,11 @@ test("transcript reads the child active branch without inherited fork context", 
 	}
 });
 
-test("loaded transcript strips the in-memory fork prefix", () => {
+test("live transcript strips fork context without storage; unloading reads the stored branch", () => {
 	const fixture = createFixture();
 	try {
-		const persisted = fixture.control.transcript(fixture.ctx, fixture.childPath).messages;
+		const persisted = fixture.childSession.buildSessionContext().messages;
+		const liveMessage = { role: "user" as const, content: "live-only follow-up", timestamp: 4 };
 		const webSearchDefinition = {
 			name: "web_search",
 			label: "Web Search",
@@ -109,17 +108,26 @@ test("loaded transcript strips the in-memory fork prefix", () => {
 			renderResult: () => undefined,
 		} as any;
 		fixture.record.session = {
-			messages: [fixture.forkMessage, ...persisted],
+			sessionManager: fixture.childSession,
+			messages: [fixture.forkMessage, ...persisted, liveMessage],
 			getToolDefinition: (name: string) => name === "web_search" ? webSearchDefinition : undefined,
 		};
 		fixture.record.loaded = true;
+		const storedFile = path.join(fixture.directory, "stored-session.jsonl");
+		fs.renameSync(fixture.record.sessionFile, storedFile);
 		const transcript = fixture.control.transcript(fixture.ctx, fixture.childPath);
-		assert.deepEqual(transcript.messages, persisted);
+		assert.equal(transcript.cwd, "/tmp/project");
+		assert.deepEqual(transcript.messages, [...persisted, liveMessage]);
 		assert.deepEqual(transcript.toolDefinitions, [webSearchDefinition]);
 
+		fs.renameSync(storedFile, fixture.record.sessionFile);
+		const storedMessage = { role: "user" as const, content: "stored follow-up", timestamp: 5 };
+		SessionManager.open(fixture.record.sessionFile).appendMessage(storedMessage);
 		fixture.record.session = undefined;
 		fixture.record.loaded = false;
 		const unloadedTranscript = fixture.control.transcript(fixture.ctx, fixture.childPath);
+		assert.equal(unloadedTranscript.cwd, "/tmp/project");
+		assert.deepEqual(unloadedTranscript.messages, [...persisted, storedMessage]);
 		assert.deepEqual(unloadedTranscript.toolDefinitions, [webSearchDefinition]);
 	} finally {
 		fs.rmSync(fixture.directory, { recursive: true, force: true });

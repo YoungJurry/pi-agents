@@ -18,7 +18,6 @@ import { AgentPickerComponent, AgentTranscriptViewer, formatAgentUsage, renderAg
 const SELF_PATH = fileURLToPath(import.meta.url);
 const WIDGET_KEY = "pi-agents-tree";
 const STATUS_KEY = "pi-agents";
-const PROMPT_MARKER = "<multi_agent_role>";
 
 function statusIcon(status: AgentLifecycleStatus): string {
 	switch (status) {
@@ -67,7 +66,7 @@ class AgentTreeWidget {
 		private readonly theme: Theme,
 	) {}
 
-	render(width: number): string[] {
+	getLines(): string[] {
 		const ctx = this.getContext();
 		if (!ctx) return [];
 		let agents: AgentView[];
@@ -85,7 +84,11 @@ class AgentTreeWidget {
 			...visibleAgents.slice(0, 8).map((agent) => treeLine(agent, this.theme)),
 		];
 		if (visibleAgents.length > 8) lines.push(this.theme.fg("dim", `  … ${visibleAgents.length - 8} more; use /agents`));
-		return lines.map((line) => truncateToWidth(line, Math.max(1, width)));
+		return lines;
+	}
+
+	render(width: number): string[] {
+		return this.getLines().map((line) => truncateToWidth(line, Math.max(1, width)));
 	}
 
 	invalidate(): void {}
@@ -105,6 +108,10 @@ export default function piAgentsExtension(pi: ExtensionAPI): void {
 
 	let activeContext: ExtensionContext | undefined;
 	let widgetTui: { requestRender(): void } | undefined;
+	let treeWidget: AgentTreeWidget | undefined;
+	// Undefined is a cleared status; null means no update has been sent yet.
+	let lastStatusText: string | undefined | null = null;
+	let lastTreeLines: string[] | undefined;
 
 	const updateUi = () => {
 		const ctx = activeContext;
@@ -118,18 +125,30 @@ export default function piAgentsExtension(pi: ExtensionAPI): void {
 		} catch {
 			// Root context can be transiently unavailable during reload/shutdown.
 		}
-		ctx.ui.setStatus(
-			STATUS_KEY,
-			activeAgentCount > 0 || queuedAgentCount > 0
-				? ctx.ui.theme.fg("warning", `agents ${activeAgentCount} active${queuedAgentCount > 0 ? ` · ${queuedAgentCount} waiting` : ""}`)
-				: undefined,
-		);
-		widgetTui?.requestRender();
+		const statusText = activeAgentCount > 0 || queuedAgentCount > 0
+			? ctx.ui.theme.fg("warning", `agents ${activeAgentCount} active${queuedAgentCount > 0 ? ` · ${queuedAgentCount} waiting` : ""}`)
+			: undefined;
+		if (statusText !== lastStatusText) {
+			ctx.ui.setStatus(STATUS_KEY, statusText);
+			lastStatusText = statusText;
+		}
+		if (treeWidget && widgetTui) {
+			const treeLines = treeWidget.getLines();
+			const previousLines = lastTreeLines;
+			if (!previousLines || treeLines.length !== previousLines.length || treeLines.some((line, index) => line !== previousLines[index])) {
+				lastTreeLines = treeLines;
+				widgetTui.requestRender();
+			}
+		}
 	};
 	control.onChange(updateUi);
 
 	pi.on("session_start", (event, ctx) => {
 		activeContext = ctx;
+		widgetTui = undefined;
+		treeWidget = undefined;
+		lastStatusText = null;
+		lastTreeLines = undefined;
 		control.bindRoot(ctx);
 		const resumedExistingSession = event.reason === "resume"
 			|| (event.reason === "startup" && ctx.sessionManager.getEntries().some((entry) => entry.type === "message"));
@@ -141,7 +160,9 @@ export default function piAgentsExtension(pi: ExtensionAPI): void {
 		if (ctx.mode === "tui") {
 			ctx.ui.setWidget(WIDGET_KEY, (tui, theme) => {
 				widgetTui = tui;
-				return new AgentTreeWidget(control, () => activeContext, theme);
+				treeWidget = new AgentTreeWidget(control, () => activeContext, theme);
+				lastTreeLines = undefined;
+				return treeWidget;
 			}, { placement: "belowEditor" });
 		}
 		updateUi();
@@ -150,8 +171,7 @@ export default function piAgentsExtension(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", (event, ctx) => {
 		activeContext = ctx;
 		control.refreshRootContext(ctx);
-		if (event.systemPrompt.includes(PROMPT_MARKER)) return;
-		return { systemPrompt: `${event.systemPrompt}\n\n${control.getRootInstructions()}` };
+		event.systemPromptOptions.sections.multi_agent_role = control.getRootInstructions();
 	});
 
 	pi.on("agent_start", (_event, ctx) => {
@@ -187,6 +207,9 @@ export default function piAgentsExtension(pi: ExtensionAPI): void {
 		ctx.ui.setWidget(WIDGET_KEY, undefined);
 		activeContext = undefined;
 		widgetTui = undefined;
+		treeWidget = undefined;
+		lastStatusText = null;
+		lastTreeLines = undefined;
 	});
 
 	pi.registerMessageRenderer(EXTENSION_ID, (message, _options, theme) => {

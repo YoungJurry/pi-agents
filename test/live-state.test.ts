@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import test from "node:test";
 import { AgentControl } from "../control.ts";
 import { AgentTranscriptViewer } from "../viewer.ts";
 
 function control(): any {
  const c = new AgentControl({} as any, "/tmp/pi-agents/index.ts") as any;
- c.persistState = () => {};
- c.changed = () => {};
+ c.pi.appendEntry = () => undefined;
+ c.root = { sessionId: "root-session" };
  c.scheduleQueued = async () => {};
  c.notices = [];
  c.deliver = async (...args: unknown[]) => { c.notices.push(args); };
@@ -27,10 +30,28 @@ test("explicit cancellation rejects without overwriting result or emitting an er
  await new Promise((resolve) => setImmediate(resolve));
  assert.equal(record.status, "interrupted");
  assert.equal(record.finalAnswer, "previous result");
+ const updates: Array<{ status: string; finalAnswer: string }> = [];
+ c.onChange(() => updates.push({ status: record.status, finalAnswer: record.finalAnswer }));
  c.completeRun(record, [{ role: "assistant", content: [], stopReason: "error", errorMessage: "This operation was aborted", timestamp: 123 }]);
  assert.equal(record.status, "interrupted");
  assert.equal(record.finalAnswer, "previous result");
+ assert.deepEqual(updates, [{ status: "interrupted", finalAnswer: "previous result" }]);
  assert.deepEqual(c.notices, []);
+});
+
+test("completion publishes the final result once", t => {
+ const c = control();
+ const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agents-completion-"));
+ t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+ c.agentResultDirectory = directory;
+ const record = { id: "worker", path: "/root/worker", parentPath: "/root", launchGeneration: 1,
+  status: "running", finalAnswer: "previous result" };
+ c.agentsByPath.set(record.path, record);
+ const updates: Array<{ status: string; finalAnswer: string }> = [];
+ c.onChange(() => updates.push({ status: record.status, finalAnswer: record.finalAnswer }));
+ c.completeRun(record, [{ role: "assistant", content: [{ type: "text", text: "finished" }], stopReason: "stop", timestamp: 123 }]);
+ assert.deepEqual(updates, [{ status: "completed", finalAnswer: "finished" }]);
+ assert.equal(fs.readFileSync(path.join(directory, "worker.md"), "utf8"), "finished");
 });
 
 test("late rejection from old run cannot overwrite a new run", async () => {

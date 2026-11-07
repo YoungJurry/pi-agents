@@ -9,7 +9,7 @@ const SHARED_GUIDANCE = `All agents share the same working directory and filesys
 const COLLABORATION_DISCOVERY = `When you need to discover teammates or their status, call list_agents(view="status"). To discover available collaboration actions and their argument schemas, call list_agents(view="tools"), then invoke them through agent_action. Use the absolute agent paths returned by the status list when addressing teammates.`;
 
 export function rootAgentInstructions(): string {
-	return `<multi_agent_role>You can use sub-agents when parallel work would materially improve speed or quality.</multi_agent_role>`;
+	return `You can use sub-agents when parallel work would materially improve speed or quality.`;
 }
 
 export function childAgentInstructions(path: string, parentPath: string, rolePrompt?: string): string {

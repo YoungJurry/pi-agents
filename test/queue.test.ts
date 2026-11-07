@@ -42,9 +42,8 @@ function createControl(limit = 2): { control: AgentControl; ctx: any } {
 		cwd: "/tmp",
 		model: undefined,
 		thinkingLevel: undefined,
-		getSystemPrompt: () => "",
 	};
-	(control as any).root = { ctx, sessionId: "root-session", cwd: "/tmp", systemPrompt: "" };
+	Object.assign(control, { root: { ctx, sessionId: "root-session", cwd: "/tmp" } });
 	(control as any).pathBySessionId.set("root-session", ROOT_PATH);
 	return { control, ctx };
 }

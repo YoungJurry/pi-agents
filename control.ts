@@ -442,7 +442,6 @@ export class AgentControl {
 			cwd: ctx.cwd,
 			model: ctx.model,
 			thinkingLevel: ctx.thinkingLevel,
-			systemPrompt: ctx.getSystemPrompt(),
 		};
 		this.pathBySessionId.set(sessionId, ROOT_PATH);
 		if (changedSession) this.restoreState(ctx);
@@ -465,7 +464,6 @@ export class AgentControl {
 		this.root.cwd = ctx.cwd;
 		this.root.model = ctx.model;
 		this.root.thinkingLevel = ctx.thinkingLevel;
-		this.root.systemPrompt = ctx.getSystemPrompt();
 	}
 
 	setRootStatus(status: AgentLifecycleStatus, message?: string): void {
@@ -832,7 +830,6 @@ export class AgentControl {
 			record.status = "interrupted";
 			record.statusMessage = "interrupted";
 			this.persistState();
-			this.changed();
 			return;
 		}
 		if (answer.error) {
@@ -846,7 +843,6 @@ export class AgentControl {
 		}
 		this.writeAgentResult(record);
 		this.persistState();
-		this.changed();
 		void this.deliver(record.path, record.parentPath, this.completionNotice(record), false, "AGENT_STATUS").catch(() => {});
 	}
 
@@ -1356,7 +1352,7 @@ export class AgentControl {
 		const record = target.record!;
 		if (!record.sessionFile) throw new Error(`agent ${record.path} has no persisted session file`);
 
-		const sessionManager = SessionManager.open(record.sessionFile);
+		const sessionManager = record.session?.sessionManager ?? SessionManager.open(record.sessionFile);
 		const forkContextLength = this.forkContextFromSessionManager(sessionManager).length;
 		const messages = record.session
 			? structuredClone(record.session.messages.slice(forkContextLength))

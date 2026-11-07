@@ -53,8 +53,8 @@ async function fixture(t: TestContext, customTools: any[] = []) {
 		sendMessage() {},
 	} as any, path.join(directory, "extension.ts"));
 	control.agentResultDirectory = path.join(directory, "results");
-	const ctx = { cwd: directory, getSystemPrompt: () => "", isProjectTrusted: () => false, sessionManager: { getSessionId: () => "root-session" } };
-	control.root = { ctx, cwd: directory, sessionId: "root-session", systemPrompt: "", model: oldModel };
+	const ctx = { cwd: directory, isProjectTrusted: () => false, sessionManager: { getSessionId: () => "root-session" } };
+	control.root = { ctx, cwd: directory, sessionId: "root-session", model: oldModel };
 	control.pathBySessionId.set("root-session", "/root");
 	control.modelRuntime = runtime;
 	const record: any = {

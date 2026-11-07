@@ -58,9 +58,8 @@ test("agent usage keeps main and sub-agent cache statistics separate", () => {
 			cwd: "/tmp/project",
 			model: undefined,
 			thinkingLevel: undefined,
-			getSystemPrompt: () => "",
 		} as any;
-		(control as any).root = { ctx, sessionId: rootSession.getSessionId(), cwd: ctx.cwd, systemPrompt: "" };
+		control["root"] = { ctx, sessionId: rootSession.getSessionId(), cwd: ctx.cwd };
 		(control as any).pathBySessionId.set(rootSession.getSessionId(), ROOT_PATH);
 		(control as any).agentsByPath.set("/root/worker", {
 			id: childSession.getSessionId(),

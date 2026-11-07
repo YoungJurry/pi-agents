@@ -16,8 +16,8 @@ function fixture(t: TestContext) {
 		appendEntry: (customType: string, data: any) => entries.push({ type: "custom", customType, data: structuredClone(data) }),
 		sendMessage() {},
 	} as any, "/tmp/pi-agents/index.ts", 1, 1);
-	const ctx = { cwd: "/tmp", getSystemPrompt: () => "", sessionManager: { getSessionId: () => "root-session" } };
-	control.root = { ctx, cwd: "/tmp", sessionId: "root-session", systemPrompt: "" };
+	const ctx = { cwd: "/tmp", sessionManager: { getSessionId: () => "root-session" } };
+	control.root = { ctx, cwd: "/tmp", sessionId: "root-session" };
 	control.pathBySessionId.set("root-session", "/root");
 	const models = [
 		{ provider: "test", id: "old", reasoning: true },

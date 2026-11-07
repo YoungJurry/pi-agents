@@ -24,7 +24,6 @@ function fixture(t: TestContext, failFirstLoad: boolean) {
   const controls: any[] = [];
   const ctx: any = {
     cwd: workspace, model: undefined, thinkingLevel: undefined,
-    getSystemPrompt: () => "",
     isProjectTrusted: () => false,
     sessionManager: {
       getSessionId: () => "isolated-audit-root",
@@ -42,7 +41,7 @@ function fixture(t: TestContext, failFirstLoad: boolean) {
       sendMessage(message: any) { notices.push(structuredClone(message)); },
     };
     const control: any = new AgentControl(pi, path.join(process.cwd(), "index.ts"), 2, 2);
-    control.root = { ctx, sessionId: "isolated-audit-root", cwd: workspace, systemPrompt: "" };
+    control.root = { ctx, sessionId: "isolated-audit-root", cwd: workspace };
     control.pathBySessionId.set("isolated-audit-root", "/root");
     control.childSessionDirectory = path.join(directory, "sessions");
     control.agentResultDirectory = path.join(directory, "results");

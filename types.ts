@@ -87,7 +87,6 @@ export interface RootBinding {
 	cwd: string;
 	model?: Model<any>;
 	thinkingLevel?: ThinkingLevel;
-	systemPrompt: string;
 }
 
 export interface AgentView {

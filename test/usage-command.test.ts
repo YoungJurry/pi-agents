@@ -45,7 +45,6 @@ test("agent-usage appends an inline TUI-only entry instead of opening an overlay
 			cwd: "/tmp/project",
 			model: undefined,
 			thinkingLevel: undefined,
-			getSystemPrompt: () => "",
 			isProjectTrusted: () => true,
 			hasUI: true,
 			mode: "tui",
